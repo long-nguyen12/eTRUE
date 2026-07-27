@@ -5,6 +5,28 @@ import gc
 import json
 
 
+def escape_json_control_characters(text):
+    """Escape line breaks and tabs that a model placed inside JSON strings."""
+    cleaned = []
+    inside_string = False
+    escaped = False
+
+    for character in text:
+        if inside_string and ord(character) < 32:
+            cleaned.append(json.dumps(character)[1:-1])
+        else:
+            cleaned.append(character)
+
+        if escaped:
+            escaped = False
+        elif inside_string and character == "\\":
+            escaped = True
+        elif character == '"':
+            inside_string = not inside_string
+
+    return "".join(cleaned)
+
+
 def parse_json_output(text):
     text = str(text or "").strip()
     if "```" in text:
@@ -26,7 +48,15 @@ def parse_json_output(text):
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
-        return ast.literal_eval(candidate)
+        try:
+            return json.loads(escape_json_control_characters(candidate))
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            return ast.literal_eval(candidate)
+        except (ValueError, SyntaxError) as error:
+            raise ValueError("Model output contained invalid structured data") from error
 
 
 def enum_value(value, allowed):
