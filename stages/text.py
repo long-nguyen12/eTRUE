@@ -347,6 +347,25 @@ def run(records, output, model_cache, force=False, offline=False):
             result = generate_text_result(model, tokenizer, device, grounding_text)
             write_json(cached, result)
 
+        if result.get("status") == "ok":
+            analysis = result.get("analysis")
+
+            if (
+                isinstance(analysis, list)
+                and len(analysis) == 1
+                and isinstance(analysis[0], dict)
+            ):
+                result["analysis"] = analysis[0]
+                write_json(cached, result)
+            elif not isinstance(analysis, dict):
+                result = {
+                    "status": "parse_error",
+                    "raw_output": analysis,
+                    "error": "Text model output must be a JSON object",
+                    "model": MODELS["text"],
+                }
+                write_json(cached, result)
+
         reset_text_analysis(sidecar)
         if result.get("status") == "ok":
             apply_text_analysis(sidecar, result["analysis"], grounding_text, event_grounding_text)
