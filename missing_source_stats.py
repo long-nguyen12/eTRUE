@@ -31,6 +31,7 @@ def missing_source_stats(results_directory):
     missing_by_field = {field: 0 for field in SOURCE_FIELDS}
     records_with_any_missing = 0
     records_with_all_missing = 0
+    records_missing_uploader_name_and_profile = 0
 
     for path in files:
         with path.open("r", encoding="utf-8") as handle:
@@ -52,12 +53,17 @@ def missing_source_stats(results_directory):
             records_with_any_missing += 1
         if len(missing_fields) == len(SOURCE_FIELDS):
             records_with_all_missing += 1
+        if "uploader_name" in missing_fields and "uploader_profile" in missing_fields:
+            records_missing_uploader_name_and_profile += 1
 
     return {
         "total_records": len(files),
         "missing_by_field": missing_by_field,
         "records_with_any_missing": records_with_any_missing,
         "records_with_all_missing": records_with_all_missing,
+        "records_missing_uploader_name_and_profile": (
+            records_missing_uploader_name_and_profile
+        ),
     }
 
 
@@ -96,6 +102,11 @@ def print_stats(stats):
         "Records with all source fields missing: "
         f"{stats['records_with_all_missing']}/{total} "
         f"({percentage(stats['records_with_all_missing'], total):.2f}%)"
+    )
+    overlap = stats["records_missing_uploader_name_and_profile"]
+    print(
+        "Missing uploader_name and uploader_profile overlap: "
+        f"{overlap}/{total} ({percentage(overlap, total):.2f}%)"
     )
 
 
