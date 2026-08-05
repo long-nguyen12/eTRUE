@@ -84,6 +84,7 @@ def run(records, output, force=False):
 
             if "https://www.youtube.com/embed/" in url:
                 url = url.replace("https://www.youtube.com/embed/", "https://www.youtube.com/watch?v=")
+            
             result = {"retrieved_at": now(), "url": url, "errors": []}
             if url:
                 try:
@@ -98,22 +99,22 @@ def run(records, output, force=False):
             write_json(cached, result)
 
         sidecar_file = sidecar_path(output, record["claim_id"])
-        sidecar = read_json(sidecar_file)
+        extra = read_json(sidecar_file)
         metadata = result.get("platform_metadata") or {}
         if metadata:
-            source_fields = sidecar["verification"]["source"]
+            source_fields = extra["verification"]["source"]
             source_fields["uploader_name"] = metadata.get("uploader") or metadata.get("channel")
             source_fields["uploader_profile"] = metadata.get("uploader_url") or metadata.get("channel_url")
             date = normalize_date(metadata.get("upload_date"))
             if date:
-                sidecar["verification"]["date"]["video_upload_date"] = date
-            motivation = sidecar["verification"]["motivation"]
+                extra["verification"]["date"]["video_upload_date"] = date
+            motivation = extra["verification"]["motivation"]
             motivation["original_caption"] = metadata.get("title") or motivation.get("original_caption")
             motivation["original_description"] = metadata.get("description") or motivation.get(
                 "original_description"
             )
             add_evidence(
-                sidecar,
+                extra,
                 "platform_metadata",
                 result.get("url"),
                 "Uploader, profile, title, description, and upload date retrieved from the platform.",
@@ -129,12 +130,12 @@ def run(records, output, force=False):
             )
         archive = result.get("wayback")
         if archive:
-            provenance = sidecar["verification"]["provenance"]
+            provenance = extra["verification"]["provenance"]
             if not provenance.get("earliest_known_date") or archive["date"] < provenance["earliest_known_date"]:
                 provenance["earliest_known_date"] = archive["date"]
                 provenance["earliest_known_url"] = archive["url"]
             add_evidence(
-                sidecar,
+                extra,
                 "archive_record",
                 archive["snapshot_url"],
                 "Earliest successful Wayback snapshot for the video URL.",
@@ -146,8 +147,8 @@ def run(records, output, force=False):
                 retrieved_at=result.get("retrieved_at"),
                 archive=archive,
             )
-            sidecar["verification"]["date"]["earliest_online_date"] = archive["date"]
-        mark_automated(sidecar, "web", result)
-        write_json(sidecar_file, sidecar)
+            extra["verification"]["date"]["earliest_online_date"] = archive["date"]
+        mark_automated(extra, "web", result)
+        write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("web", number, "/", len(records), flush=True)

@@ -44,11 +44,11 @@ def source_name_is_grounded(value, grounding_text):
     return bool(name and name not in GENERIC_SOURCE_NAMES and name in evidence)
 
 
-def apply_source_rules(sidecar, grounding_text, protected_source, evidence_ids):
-    source = sidecar["verification"]["source"]
+def apply_source_rules(extra, grounding_text, protected_source, evidence_ids):
+    source = extra["verification"]["source"]
     original_source = source.get("original_source_name")
     uploader = source.get("uploader_name")
-    field_evidence = sidecar.get("field_evidence", {})
+    field_evidence = extra.get("field_evidence", {})
     source_evidence = (
         field_evidence.get("verification.source.original_source_name", [])
         + field_evidence.get("verification.source.uploader_name", [])
@@ -74,7 +74,7 @@ def apply_source_rules(sidecar, grounding_text, protected_source, evidence_ids):
             if any(re.search(satire_terms, window) for window in source_windows)
             else "unknown"
         )
-        add_field_evidence(sidecar, "verification.source.source_type", supporting_evidence)
+        add_field_evidence(extra, "verification.source.source_type", supporting_evidence)
 
     if not original_source:
         source["source_type"] = None
@@ -88,5 +88,5 @@ def apply_source_rules(sidecar, grounding_text, protected_source, evidence_ids):
 
     source["source_is_uploader"] = True
     source["source_mismatch"] = False
-    add_field_evidence(sidecar, "verification.source.source_mismatch", supporting_evidence)
-    add_field_evidence(sidecar, "verification.source.source_is_uploader", supporting_evidence)
+    add_field_evidence(extra, "verification.source.source_mismatch", supporting_evidence)
+    add_field_evidence(extra, "verification.source.source_is_uploader", supporting_evidence)

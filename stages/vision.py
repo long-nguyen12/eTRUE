@@ -233,19 +233,19 @@ def run(records, source, output, model_cache, force=False, offline=False):
             write_json(cached, analysis)
 
         sidecar_file = sidecar_path(output, record["claim_id"])
-        sidecar = read_json(sidecar_file)
+        extra = read_json(sidecar_file)
         if analysis.get("status") == "ok":
             clues = []
             for category in ("ocr_text", "landmarks", "signs_and_logos", "languages", "terrain_and_weather"):
                 for value in analysis.get(category) or []:
                     clues.append({"type": category, "value": value})
-            location = sidecar["verification"]["location"]
+            location = extra["verification"]["location"]
             location["visual_location_clues"] = clues
             for candidate in analysis.get("candidate_locations") or []:
                 if candidate not in location["candidate_locations"]:
                     location["candidate_locations"].append(candidate)
             evidence_id = add_evidence(
-                sidecar,
+                extra,
                 "keyframe_analysis",
                 "cache/vision/" + record["claim_id"] + ".json",
                 analysis.get("scene_summary"),
@@ -256,9 +256,9 @@ def run(records, source, output, model_cache, force=False, offline=False):
                 model=MODELS["vision"],
                 frames=analysis.get("frames"),
             )
-            add_field_evidence(sidecar, "verification.location.visual_location_clues", [evidence_id])
-        mark_automated(sidecar, "vision", analysis)
-        write_json(sidecar_file, sidecar)
+            add_field_evidence(extra, "verification.location.visual_location_clues", [evidence_id])
+        mark_automated(extra, "vision", analysis)
+        write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("vision", number, "/", len(records), flush=True)
     release_models(model, processor)

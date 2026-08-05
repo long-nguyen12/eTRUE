@@ -9,8 +9,8 @@ from utils.records import sidecar_path
 from utils.results import write_readable_result
 
 
-def verification_fields(sidecar):
-    for pillar, values in sidecar.get("verification", {}).items():
+def verification_fields(extra):
+    for pillar, values in extra.get("verification", {}).items():
         for field, value in values.items():
             yield "verification." + pillar + "." + field, value
 
@@ -25,16 +25,16 @@ def run(records, output):
     review_status = Counter()
     evidence_types = Counter()
     for record in records:
-        sidecar = read_json(sidecar_path(output, record["claim_id"]))
-        write_readable_result(sidecar, output)
-        links = sidecar.get("field_evidence", {})
-        for field, value in verification_fields(sidecar):
+        extra = read_json(sidecar_path(output, record["claim_id"]))
+        write_readable_result(extra, output)
+        links = extra.get("field_evidence", {})
+        for field, value in verification_fields(extra):
             if is_filled(value):
                 coverage[field] += 1
                 if not links.get(field):
                     unsupported.append({"claim_id": record["claim_id"], "field": field})
-        review_status[(sidecar.get("review") or {}).get("status") or "missing"] += 1
-        evidence_types.update(evidence.get("type") for evidence in sidecar.get("evidence", []))
+        review_status[(extra.get("review") or {}).get("status") or "missing"] += 1
+        evidence_types.update(evidence.get("type") for evidence in extra.get("evidence", []))
     report = {
         "samples": len(records),
         "field_coverage": dict(sorted(coverage.items())),

@@ -102,9 +102,9 @@ def run(records, source, output, threshold=0.95):
         matches = matches[:5]
 
         sidecar_file = sidecar_path(output, claim_id)
-        sidecar = read_json(sidecar_file)
-        remove_evidence_type(sidecar, "local_visual_match")
-        provenance = sidecar["verification"]["provenance"]
+        extra = read_json(sidecar_file)
+        remove_evidence_type(extra, "local_visual_match")
+        provenance = extra["verification"]["provenance"]
         current_video = record_by_id[claim_id]["data"].get("video_information") or {}
         provenance["provenance_status"] = "unknown"
         provenance["earliest_known_url"] = current_video.get("video_url")
@@ -115,7 +115,7 @@ def run(records, source, output, threshold=0.95):
         for match in matches:
             evidence_ids.append(
                 add_evidence(
-                    sidecar,
+                    extra,
                     "local_visual_match",
                     "cache/clip/" + claim_id + ".npz",
                     "Keyframes match local claim {0} (similarity {1}, coverage {2}).".format(
@@ -127,7 +127,7 @@ def run(records, source, output, threshold=0.95):
             )
         if evidence_ids:
             add_field_evidence(
-                sidecar,
+                extra,
                 "verification.provenance.near_duplicate_matches",
                 evidence_ids,
             )
@@ -135,8 +135,8 @@ def run(records, source, output, threshold=0.95):
         dated = [
             {
                 "claim_id": claim_id,
-                "date": sidecar["verification"]["date"].get("video_upload_date"),
-                "url": sidecar["normalized_video_information"].get("video_url"),
+                "date": extra["verification"]["date"].get("video_upload_date"),
+                "url": extra["normalized_video_information"].get("video_url"),
             }
         ] + [match for match in matches if match.get("date")]
         dated = [item for item in dated if item.get("date")]
@@ -162,8 +162,8 @@ def run(records, source, output, threshold=0.95):
                     "verification.provenance.earliest_known_date",
                     "verification.provenance.previous_context_summary",
                 ):
-                    add_field_evidence(sidecar, field, evidence_ids)
-        mark_automated(sidecar, "local_visual_matching", {"match_count": len(matches)})
-        write_json(sidecar_file, sidecar)
+                    add_field_evidence(extra, field, evidence_ids)
+        mark_automated(extra, "local_visual_matching", {"match_count": len(matches)})
+        write_json(sidecar_file, extra)
         if number % 100 == 0:
             print("match", number, "/", len(available), flush=True)

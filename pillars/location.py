@@ -68,13 +68,13 @@ def extract_location_contrast(grounding_text):
     return None
 
 
-def apply_location_rules(sidecar, event_grounding_text, evidence_ids):
-    location = sidecar["verification"]["location"]
+def apply_location_rules(extra, event_grounding_text, evidence_ids):
+    location = extra["verification"]["location"]
     contrast = extract_location_contrast(event_grounding_text)
     if contrast:
         location["claimed_location"], location["verified_location"] = contrast
-        add_field_evidence(sidecar, "verification.location.claimed_location", evidence_ids)
-        add_field_evidence(sidecar, "verification.location.verified_location", evidence_ids)
+        add_field_evidence(extra, "verification.location.claimed_location", evidence_ids)
+        add_field_evidence(extra, "verification.location.verified_location", evidence_ids)
 
     claimed_location = location.get("claimed_location")
     verified_location = location.get("verified_location")

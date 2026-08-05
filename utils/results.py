@@ -3,20 +3,20 @@
 from utils.files import write_json
 
 
-def readable_result(sidecar):
-    verification = sidecar["verification"]
+def readable_result(extra):
+    verification = extra["verification"]
     provenance = verification["provenance"]
     source = verification["source"]
     date = verification["date"]
     location = verification["location"]
     motivation = verification["motivation"]
-    video = sidecar["normalized_video_information"]
+    video = extra["normalized_video_information"]
 
-    claim_components = sidecar.get("claim_components") or []
+    claim_components = extra.get("claim_components") or []
     claim = claim_components[0].get("text") if claim_components else None
 
     return {
-        "claim_id": sidecar["claim_id"],
+        "claim_id": extra["claim_id"],
         "claim": claim,
         "video_information": {
             "platform": video.get("platform"),
@@ -68,6 +68,6 @@ def readable_result(sidecar):
     }
 
 
-def write_readable_result(sidecar, output):
-    path = output / "results" / (sidecar["claim_id"] + ".json")
-    write_json(path, readable_result(sidecar))
+def write_readable_result(extra, output):
+    path = output / "results" / (extra["claim_id"] + ".json")
+    write_json(path, readable_result(extra))

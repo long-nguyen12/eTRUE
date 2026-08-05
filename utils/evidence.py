@@ -6,14 +6,14 @@ import json
 from utils.files import now
 
 
-def add_field_evidence(sidecar, field, evidence_ids):
-    links = sidecar.setdefault("field_evidence", {}).setdefault(field, [])
+def add_field_evidence(extra, field, evidence_ids):
+    links = extra.setdefault("field_evidence", {}).setdefault(field, [])
     for evidence_id in evidence_ids:
         if evidence_id not in links:
             links.append(evidence_id)
 
 
-def add_evidence(sidecar, evidence_type, source, observation, fields=(), **details):
+def add_evidence(extra, evidence_type, source, observation, fields=(), **details):
     identity = json.dumps(
         [evidence_type, str(source), str(observation), details.get("model")],
         ensure_ascii=False,
@@ -29,34 +29,34 @@ def add_evidence(sidecar, evidence_type, source, observation, fields=(), **detai
     }
     evidence.update({key: value for key, value in details.items() if value is not None})
 
-    existing = {item["id"] for item in sidecar.setdefault("evidence", [])}
+    existing = {item["id"] for item in extra.setdefault("evidence", [])}
     if evidence_id not in existing:
-        sidecar["evidence"].append(evidence)
+        extra["evidence"].append(evidence)
     for field in fields:
-        add_field_evidence(sidecar, field, [evidence_id])
+        add_field_evidence(extra, field, [evidence_id])
     return evidence_id
 
 
-def remove_evidence_type(sidecar, evidence_type):
+def remove_evidence_type(extra, evidence_type):
     removed = {
         evidence["id"]
-        for evidence in sidecar.get("evidence", [])
+        for evidence in extra.get("evidence", [])
         if evidence.get("type") == evidence_type
     }
-    sidecar["evidence"] = [
-        evidence for evidence in sidecar.get("evidence", []) if evidence.get("id") not in removed
+    extra["evidence"] = [
+        evidence for evidence in extra.get("evidence", []) if evidence.get("id") not in removed
     ]
-    for field, evidence_ids in list(sidecar.get("field_evidence", {}).items()):
+    for field, evidence_ids in list(extra.get("field_evidence", {}).items()):
         remaining = [evidence_id for evidence_id in evidence_ids if evidence_id not in removed]
         if remaining:
-            sidecar["field_evidence"][field] = remaining
+            extra["field_evidence"][field] = remaining
         else:
-            del sidecar["field_evidence"][field]
+            del extra["field_evidence"][field]
 
 
-def mark_automated(sidecar, stage, value):
-    sidecar.setdefault("automation", {})[stage] = value
-    review = sidecar.setdefault("review", {})
+def mark_automated(extra, stage, value):
+    extra.setdefault("automation", {})[stage] = value
+    review = extra.setdefault("review", {})
     if review.get("status") in {None, "not_started", "automated"}:
         review["status"] = "automated"
     review["last_automated_at"] = now()

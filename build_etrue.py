@@ -1,4 +1,4 @@
-"""Build simple eTRUE sidecar annotations from the original TRUE dataset."""
+"""Build simple eTRUE extra annotations from the original TRUE dataset."""
 
 import argparse
 import hashlib

@@ -83,21 +83,21 @@ def run(records, output, force=False):
 
     for number, record in enumerate(records, 1):
         sidecar_file = sidecar_path(output, record["claim_id"])
-        sidecar = read_json(sidecar_file)
-        location = sidecar["verification"]["location"]
+        extra = read_json(sidecar_file)
+        location = extra["verification"]["location"]
         claimed = location.get("claimed_location")
         verified = location.get("verified_location")
         location["verified_coordinates"] = None
         location["location_mismatch_type"] = None
 
-        remove_evidence_type(sidecar, "geocoder_result")
-        links = sidecar.setdefault("field_evidence", {})
+        remove_evidence_type(extra, "geocoder_result")
+        links = extra.setdefault("field_evidence", {})
         links.pop("verification.location.verified_coordinates", None)
         links.pop("verification.location.location_mismatch_type", None)
 
         if not verified:
-            mark_automated(sidecar, "geocode", {"status": "skipped", "reason": "no verified location"})
-            write_json(sidecar_file, sidecar)
+            mark_automated(extra, "geocode", {"status": "skipped", "reason": "no verified location"})
+            write_json(sidecar_file, extra)
             continue
 
         results = {"verified": geocode(verified, cache, session, force)}
@@ -118,7 +118,7 @@ def run(records, output, force=False):
                 ("verification.location.verified_coordinates",) if role == "verified" else ()
             )
             evidence_ids[role] = add_evidence(
-                sidecar,
+                extra,
                 "geocoder_result",
                 "https://nominatim.openstreetmap.org/ui/search.html?q=" + quote(queries[role]),
                 row.get("display_name"),
@@ -140,12 +140,12 @@ def run(records, output, force=False):
         )
         if location["location_mismatch_type"]:
             add_field_evidence(
-                sidecar,
+                extra,
                 "verification.location.location_mismatch_type",
                 list(dict.fromkeys(evidence_ids.values())),
             )
 
-        mark_automated(sidecar, "geocode", {"status": "ok", **results})
-        write_json(sidecar_file, sidecar)
+        mark_automated(extra, "geocode", {"status": "ok", **results})
+        write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("geocode", number, "/", len(records), flush=True)

@@ -19,12 +19,12 @@ LOCATION_FIELDS = (
 )
 
 
-def build_sources(record, sidecar):
+def build_sources(record, extra):
     """Return category, text, URL, and any already-grounded visual places."""
     data = record["data"]
-    motivation = sidecar["verification"]["motivation"]
-    video = sidecar["normalized_video_information"]
-    source_file = sidecar.get("source_file")
+    motivation = extra["verification"]["motivation"]
+    video = extra["normalized_video_information"]
+    source_file = extra.get("source_file")
     sources = []
 
     def add(category, text, source, known=()):
@@ -39,11 +39,11 @@ def build_sources(record, sidecar):
     add("platform", motivation.get("original_description"), video.get("video_url"))
     add("transcript", video.get("video_transcript"), source_file)
     add("fact_check", trim(data.get("content"), 12000), data.get("url"))
-    for evidence in sidecar.get("evidence") or []:
+    for evidence in extra.get("evidence") or []:
         if evidence.get("type") == "fact_check_evidence":
             add("fact_check", evidence.get("observation"), evidence.get("source"))
 
-    vision = (sidecar.get("automation") or {}).get("vision") or {}
+    vision = (extra.get("automation") or {}).get("vision") or {}
     if vision.get("status") == "ok":
         visual_text = "\n".join(
             str(item)
@@ -120,18 +120,18 @@ def choose_verified_location(candidates):
     return winners[0] if len(winners) == 1 else None
 
 
-def apply_candidates(sidecar, result):
-    location = sidecar["verification"]["location"]
-    links = sidecar.setdefault("field_evidence", {})
+def apply_candidates(extra, result):
+    location = extra["verification"]["location"]
+    links = extra.setdefault("field_evidence", {})
     for field in LOCATION_FIELDS:
         links.pop("verification.location." + field, None)
-    remove_evidence_type(sidecar, "location_text_candidate")
+    remove_evidence_type(extra, "location_text_candidate")
 
     candidates = result.get("candidates") or []
     evidence_ids = {}
     for candidate in candidates:
         evidence_ids[candidate["name"]] = add_evidence(
-            sidecar,
+            extra,
             "location_text_candidate",
             candidate["evidence"][0]["source"] if candidate["evidence"] else "",
             "Supported by: " + ", ".join(candidate["sources"]),
@@ -156,16 +156,16 @@ def apply_candidates(sidecar, result):
 
     if evidence_ids:
         add_field_evidence(
-            sidecar, "verification.location.candidate_locations", list(evidence_ids.values())
+            extra, "verification.location.candidate_locations", list(evidence_ids.values())
         )
     for field, value in (("claimed_location", claimed), ("verified_location", verified)):
         if value:
             add_field_evidence(
-                sidecar, "verification.location." + field, [evidence_ids[value]]
+                extra, "verification.location." + field, [evidence_ids[value]]
             )
     if location["location_mismatch_type"] == "same":
         add_field_evidence(
-            sidecar, "verification.location.location_mismatch_type", [evidence_ids[claimed]]
+            extra, "verification.location.location_mismatch_type", [evidence_ids[claimed]]
         )
 
 
@@ -196,7 +196,7 @@ def run(records, output, model_cache, force=False, offline=False):
     for number, record in enumerate(records, 1):
         cached = cache / (record["claim_id"] + ".json")
         sidecar_file = sidecar_path(output, record["claim_id"])
-        sidecar = read_json(sidecar_file)
+        extra = read_json(sidecar_file)
         if cached.exists() and not force:
             result = read_json(cached)
             for candidate in result.get("candidates") or []:
@@ -207,13 +207,13 @@ def run(records, output, model_cache, force=False, offline=False):
             result = {
                 "status": "ok",
                 "model": MODELS["location"],
-                "candidates": extract_candidates(build_sources(record, sidecar), recognizer),
+                "candidates": extract_candidates(build_sources(record, extra), recognizer),
             }
             write_json(cached, result)
 
-        apply_candidates(sidecar, result)
-        mark_automated(sidecar, "location", result)
-        write_json(sidecar_file, sidecar)
+        apply_candidates(extra, result)
+        mark_automated(extra, "location", result)
+        write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("location", number, "/", len(records), flush=True)
 

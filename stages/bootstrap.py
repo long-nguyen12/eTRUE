@@ -7,7 +7,7 @@ from utils.files import read_json, trim, write_json
 from utils.records import sidecar_path
 
 
-def import_existing_evidence(sidecar, data):
+def import_existing_evidence(extra, data):
     evidences = data.get("evidences") or {}
     count = int(evidences.get("num_of_evidence") or 0)
     for number in range(1, count + 1):
@@ -17,7 +17,7 @@ def import_existing_evidence(sidecar, data):
         text = trim(item[0], 2000)
         references = item[1] if len(item) > 1 and isinstance(item[1], list) else []
         add_evidence(
-            sidecar,
+            extra,
             "fact_check_evidence",
             references[0] if references else data.get("url"),
             text,
@@ -29,20 +29,20 @@ def run(records, source, output, force=False):
     """Copy claims, metadata, articles, evidence, and known publishers."""
     for number, record in enumerate(records, 1):
         path = sidecar_path(output, record["claim_id"])
-        sidecar = read_json(path)
+        extra = read_json(path)
         data = record["data"]
         video = data.get("video_information") or {}
-        verification = sidecar["verification"]
+        verification = extra["verification"]
 
         claim_evidence = add_evidence(
-            sidecar,
+            extra,
             "claim_text",
             record["path"].relative_to(source).as_posix(),
             data.get("claim"),
             fields=("verification.motivation.claimed_framing",),
         )
         metadata_evidence = add_evidence(
-            sidecar,
+            extra,
             "dataset_video_metadata",
             record["path"].relative_to(source).as_posix(),
             "Video URL, platform, upload date, title, and description imported from TRUE.",
@@ -55,24 +55,24 @@ def run(records, source, output, force=False):
             ),
         )
         article_evidence = add_evidence(
-            sidecar,
+            extra,
             "fact_check_article",
             data.get("url"),
             trim(data.get("content"), 2000),
         )
-        import_existing_evidence(sidecar, data)
+        import_existing_evidence(extra, data)
 
         transcript = video.get("video_transcript")
         has_transcript = bool(str(transcript or "").strip())
-        normalized = sidecar["normalized_video_information"]
+        normalized = extra["normalized_video_information"]
         normalized["video_transcript"] = transcript if has_transcript else None
         normalized["transcript_status"] = "available" if has_transcript else "missing"
         normalized.pop("generated_transcript", None)
-        sidecar.get("automation", {}).pop("asr", None)
-        remove_evidence_type(sidecar, "asr_transcript")
+        extra.get("automation", {}).pop("asr", None)
+        remove_evidence_type(extra, "asr_transcript")
         if has_transcript:
             add_evidence(
-                sidecar,
+                extra,
                 "dataset_transcript",
                 record["path"].relative_to(source).as_posix(),
                 trim(transcript, 2000),
@@ -88,7 +88,7 @@ def run(records, source, output, force=False):
             verification["provenance"]["earliest_known_date"] = upload_date
             verification["provenance"]["provenance_status"] = "unknown"
             add_field_evidence(
-                sidecar,
+                extra,
                 "verification.provenance.provenance_status",
                 [metadata_evidence],
             )
@@ -96,7 +96,7 @@ def run(records, source, output, force=False):
             verification["motivation"]["original_caption"] = video.get("video_headline")
             verification["motivation"]["original_description"] = video.get("video_description")
 
-        platform = sidecar["normalized_video_information"].get("platform")
+        platform = extra["normalized_video_information"].get("platform")
         official_source = OFFICIAL_SOURCES.get(platform)
         if official_source:
             verification["source"]["uploader_name"] = official_source
@@ -109,10 +109,10 @@ def run(records, source, output, force=False):
                 "verification.source.source_type",
                 "verification.source.source_is_uploader",
             ):
-                add_field_evidence(sidecar, field, [metadata_evidence])
+                add_field_evidence(extra, field, [metadata_evidence])
 
         mark_automated(
-            sidecar,
+            extra,
             "bootstrap",
             {
                 "claim_evidence": claim_evidence,
@@ -120,6 +120,6 @@ def run(records, source, output, force=False):
                 "article_evidence": article_evidence,
             },
         )
-        write_json(path, sidecar)
+        write_json(path, extra)
         if number % 100 == 0:
             print("bootstrap", number, "/", len(records), flush=True)
