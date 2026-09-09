@@ -8,6 +8,9 @@ from utils.files import now, read_json, write_json
 from utils.records import sidecar_path
 
 
+WEB_CACHE_VERSION = 2
+
+
 def wayback_earliest(url, session):
     endpoint = "https://web.archive.org/cdx/search/cdx"
     response = session.get(
@@ -80,17 +83,24 @@ def run(records, output, force=False):
         if cached.exists() and not force:
             result = read_json(cached)
         else:
+            result = None
+        if not result or result.get("cache_version") != WEB_CACHE_VERSION:
             url = (record["data"].get("video_information") or {}).get("video_url")
 
-            if "https://www.youtube.com/embed/" in url:
+            if url and "https://www.youtube.com/embed/" in url:
                 url = url.replace("https://www.youtube.com/embed/", "https://www.youtube.com/watch?v=")
-            
-            result = {"retrieved_at": now(), "url": url, "errors": []}
+
+            result = {
+                "status": "ok",
+                "cache_version": WEB_CACHE_VERSION,
+                "retrieved_at": now(),
+                "url": url,
+                "errors": [],
+            }
             if url:
                 try:
                     result["platform_metadata"] = platform_metadata(url)
                 except Exception as error:
-                    print("platform_metadata error", error)
                     result["errors"].append("platform_metadata: " + str(error))
                 try:
                     result["wayback"] = wayback_earliest(url, session)

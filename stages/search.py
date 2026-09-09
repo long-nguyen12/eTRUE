@@ -8,11 +8,8 @@ import re
 from html import unescape
 from urllib.parse import urljoin, urlsplit
 
-from dotenv import load_dotenv
-
-# load_dotenv()
-
 from build_etrue import normalize_date
+from pillars.provenance import apply_search_provenance
 from stages.web import wayback_earliest
 from utils.evidence import add_evidence, mark_automated, remove_evidence_type
 from utils.files import now, read_json, trim, write_json
@@ -20,7 +17,7 @@ from utils.records import frame_paths, sidecar_path
 
 BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 GOOGLE_VISION_URL = "https://vision.googleapis.com/v1/images:annotate"
-SEARCH_CACHE_VERSION = 2
+SEARCH_CACHE_VERSION = 4
 
 
 def quoted_phrase(value):
@@ -29,16 +26,22 @@ def quoted_phrase(value):
     return '"' + " ".join(words[:18]) + '"' if len(words) >= 4 else None
 
 
-def build_queries(record, extra):
+def build_query_specs(record, extra):
     """Use transcript, caption, claim, and credited accounts."""
     data = record["data"]
     video = data.get("video_information") or {}
     verification = extra["verification"]
     values = [
-        extra["normalized_video_information"].get("video_transcript"),
-        verification["motivation"].get("original_caption")
-        or video.get("video_headline"),
-        data.get("claim"),
+        (
+            "transcript",
+            extra["normalized_video_information"].get("video_transcript"),
+        ),
+        (
+            "caption",
+            verification["motivation"].get("original_caption")
+            or video.get("video_headline"),
+        ),
+        ("claim", data.get("claim")),
     ]
 
     source = verification.get("source") or {}
@@ -51,17 +54,30 @@ def build_queries(record, extra):
         )
     ]
 
-    queries = [quoted_phrase(value) for value in values]
+    queries = [
+        {"query": quoted_phrase(value), "query_type": query_type}
+        for query_type, value in values
+    ]
     queries += [
-        '"' + str(account).strip().replace('"', "") + '"'
+        {
+            "query": '"' + str(account).strip().replace('"', "") + '"',
+            "query_type": "account",
+        }
         for account in accounts
         if account
     ]
     unique = []
-    for query in queries:
-        if query and query.casefold() not in {item.casefold() for item in unique}:
-            unique.append(query)
+    for item in queries:
+        query = item["query"]
+        if query and query.casefold() not in {
+            existing["query"].casefold() for existing in unique
+        }:
+            unique.append(item)
     return unique[:5]
+
+
+def build_queries(record, extra):
+    return [item["query"] for item in build_query_specs(record, extra)]
 
 
 def brave_results(session, api_key, query):
@@ -471,6 +487,27 @@ def enrich_image_pages(session, image_search):
     return image_search
 
 
+def enrich_text_results(session, result, maximum=5):
+    """Attach page and archive metadata to a bounded set of search hits."""
+    for item in (result.get("results") or [])[:maximum]:
+        try:
+            item.update(candidate_page_metadata(session, item["url"]))
+        except Exception as error:
+            result["errors"].append(item["url"] + " metadata: " + str(error))
+
+        archive_target = item.get("canonical_url") or item.get("final_url") or item["url"]
+        if not public_http_url(archive_target):
+            continue
+        try:
+            archive = wayback_earliest(archive_target, session)
+            if archive:
+                item["archive_first_seen"] = archive["date"]
+                item["archive_url"] = archive["snapshot_url"]
+        except Exception as error:
+            result["errors"].append(item["url"] + " Wayback: " + str(error))
+    return result
+
+
 def search_record(record, extra, source, session, brave_key, vision_key):
     result = {
         "status": "ok",
@@ -482,28 +519,31 @@ def search_record(record, extra, source, session, brave_key, vision_key):
     if brave_key:
         result["search_provider"] = "Brave Search"
         seen = set()
-        for query in build_queries(record, extra):
+        for query_spec in build_query_specs(record, extra):
+            query = query_spec["query"]
             try:
                 for item in brave_results(session, brave_key, query):
                     if item["url"] not in seen:
                         seen.add(item["url"])
+                        item["query_type"] = query_spec["query_type"]
                         result["results"].append(item)
             except Exception as error:
                 result["errors"].append("Brave " + query + ": " + str(error))
-    elif not vision_key:
+    else:
         result["search_provider"] = "DDGS"
         seen = set()
-        for query in build_queries(record, extra):
+        for query_spec in build_query_specs(record, extra):
+            query = query_spec["query"]
             try:
                 for item in ddgs_results(query):
                     if item["url"] not in seen:
                         seen.add(item["url"])
+                        item["query_type"] = query_spec["query_type"]
                         result["results"].append(item)
             except Exception as error:
                 result["errors"].append("DDGS " + query + ": " + str(error))
-    else:
-        result["brave_status"] = "skipped: BRAVE_SEARCH_API_KEY is not set"
-    print(result["results"])
+    if session is not None:
+        enrich_text_results(session, result)
     frames = frame_paths(source, record)
     if vision_key and frames:
         selected_frames = select_keyframes(frames)
@@ -530,20 +570,31 @@ def add_search_evidence(extra, result):
     """Search hits are review candidates, never verified field evidence."""
     remove_evidence_type(extra, "provenance_search_candidate")
     remove_evidence_type(extra, "provenance_image_candidate")
+    evidence_by_url = {}
     for item in result.get("results") or []:
         observation = ". ".join(
             value for value in (item.get("title"), item.get("description")) if value
         )
-        add_evidence(
+        evidence_id = add_evidence(
             extra,
             "provenance_search_candidate",
             item["url"],
             trim(observation, 700),
             provider=result.get("search_provider") or "Brave Search",
             query=item.get("query"),
+            query_type=item.get("query_type"),
             rank=item.get("rank"),
             retrieved_at=result.get("retrieved_at"),
+            canonical_url=item.get("canonical_url"),
+            author=item.get("author"),
+            site_name=item.get("site_name"),
+            published_at=item.get("published_at"),
+            archive_first_seen=item.get("archive_first_seen"),
+            archive_url=item.get("archive_url"),
         )
+        evidence_by_url[item["url"]] = evidence_id
+        if item.get("canonical_url"):
+            evidence_by_url[item["canonical_url"]] = evidence_id
 
     image_search = result.get("image_search") or {}
     for page in image_search.get("pages") or []:
@@ -559,7 +610,7 @@ def add_search_evidence(extra, result):
             )
             if value
         )
-        add_evidence(
+        evidence_id = add_evidence(
             extra,
             "provenance_image_candidate",
             page["url"],
@@ -578,11 +629,17 @@ def add_search_evidence(extra, result):
             archive_url=page.get("archive_url"),
             retrieved_at=result.get("retrieved_at"),
         )
+        evidence_by_url[page["url"]] = evidence_id
+        if page.get("canonical_url"):
+            evidence_by_url[page["canonical_url"]] = evidence_id
+    return evidence_by_url
 
 
 def run(records, source, output, force=False):
     import requests
+    from dotenv import load_dotenv
 
+    load_dotenv()
     cache = output / "cache" / "search"
     cache.mkdir(parents=True, exist_ok=True)
     brave_key = os.environ.get("BRAVE_SEARCH_API_KEY")
@@ -606,7 +663,13 @@ def run(records, source, output, force=False):
             write_json(cached, result)
 
         if result.get("status") == "ok":
-            add_search_evidence(extra, result)
+            evidence_by_url = add_search_evidence(extra, result)
+            apply_search_provenance(
+                extra,
+                result.get("image_search") or {},
+                evidence_by_url,
+                result.get("results") or [],
+            )
         mark_automated(extra, "search", result)
         write_json(sidecar_file, extra)
         if number % 10 == 0:

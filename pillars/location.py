@@ -16,13 +16,61 @@ LOCATION_MISMATCHES = {
 }
 
 
+NON_EVENT_LOCATION_TOKENS = {
+    "airport",
+    "avenue",
+    "bay",
+    "center",
+    "city",
+    "col",
+    "county",
+    "earth",
+    "east",
+    "field",
+    "grand",
+    "high",
+    "house",
+    "international",
+    "island",
+    "kingdom",
+    "lake",
+    "los",
+    "mars",
+    "national",
+    "new",
+    "north",
+    "ocean",
+    "park",
+    "river",
+    "road",
+    "row",
+    "room",
+    "san",
+    "santa",
+    "south",
+    "southern",
+    "space",
+    "square",
+    "state",
+    "station",
+    "street",
+    "strip",
+    "the world",
+    "tower",
+    "united",
+    "way",
+    "west",
+    "world",
+}
+
+
 def location_candidate_is_plausible(value):
     text = str(value or "").strip()
-    words = re.findall(r"[A-Za-z]+", text)
-    lowered = text.lower()
+    words = re.findall(r"[^\W\d_]+", text, flags=re.UNICODE)
+    lowered = text.casefold()
     if not text or len(text) > 80 or len(words) > 8:
         return False
-    if lowered in {"front", "school district", "wooden surface"}:
+    if lowered in NON_EVENT_LOCATION_TOKENS | {"front", "school district", "wooden surface"}:
         return False
     if any(phrase in lowered for phrase in (" on board", "wearing ", "holding ", " on their ")):
         return False

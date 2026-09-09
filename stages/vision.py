@@ -23,6 +23,10 @@ VISION_PROMPT = """Analyze all keyframes together. Return exactly one compact JS
 Use at most three unique items per list. Use [] when absent. Never repeat an item.
 Do not guess a location from appearance alone. End immediately after the JSON object."""
 
+# Version 1 caches were produced without supplying the keyframe pixels to the
+# processor.  Requiring this version prevents those results from being reused.
+VISION_CACHE_VERSION = 2
+
 
 def normalize_vision_analysis(value):
     aliases = {
@@ -127,35 +131,46 @@ def run(records, source, output, model_cache, force=False, offline=False):
     """Extract conservative scene, OCR, landmark, and location clues."""
     import torch
     from PIL import Image
-    from transformers import AutoModelForImageTextToText, AutoProcessor, AutoModelForCausalLM, Qwen3VLForConditionalGeneration
+    from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
     cache = output / "cache" / "vision"
     cache.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Loading models on", device)
-    dtype = torch.float16 if device != "cpu" else torch.float32,
-    # processor = AutoProcessor.from_pretrained(
-    #     MODELS["vision"], cache_dir=str(model_cache), local_files_only=offline
-    # )
-    # if hasattr(processor, "image_processor"):
-    #     processor.image_processor.size = {"longest_edge": 1024}
-    # model = AutoModelForImageTextToText.from_pretrained(
-    #     MODELS["vision"],
-    #     cache_dir=str(model_cache),
-    #     torch_dtype=dtype,
-    #     local_files_only=offline,
-    # ).to(device)
-    processor = AutoProcessor.from_pretrained(MODELS["vision"])
+    dtype = torch.float16 if device == "cuda" else torch.float32
+    processor = AutoProcessor.from_pretrained(
+        MODELS["vision"],
+        cache_dir=str(model_cache),
+        local_files_only=offline,
+    )
+    model_options = {
+        "cache_dir": str(model_cache),
+        "local_files_only": offline,
+        "dtype": dtype,
+    }
+    if device == "cuda":
+        model_options["device_map"] = "auto"
     model = Qwen3VLForConditionalGeneration.from_pretrained(
-        MODELS["vision"], dtype="auto", device_map="auto"
-    ).to(device)
+        MODELS["vision"],
+        **model_options,
+    )
+    if device == "cpu":
+        model.to(device)
     model.eval()
     print("Loaded models")
 
     for number, record in enumerate(records, 1):
         cached = cache / (record["claim_id"] + ".json")
-        if cached.exists() and not force:
+        frames = evenly_spaced(frame_paths(source, record), 4)
+        expected_frames = [frame.relative_to(source).as_posix() for frame in frames]
+        use_cache = cached.exists() and not force
+        if use_cache:
             analysis = read_json(cached)
+            use_cache = (
+                analysis.get("cache_version") == VISION_CACHE_VERSION
+                and (analysis.get("frames") or []) == expected_frames
+            )
+        if use_cache:
             if analysis.get("status") == "parse_error" and analysis.get("raw_output"):
                 try:
                     repaired = normalize_vision_analysis(parse_json_output(analysis["raw_output"]))
@@ -171,21 +186,26 @@ def run(records, source, output, model_cache, force=False, offline=False):
                     ) else "low_quality"
                     repaired["frames"] = analysis.get("frames")
                     repaired["model"] = MODELS["vision"]
+                    repaired["cache_version"] = VISION_CACHE_VERSION
                     analysis = repaired
                     write_json(cached, analysis)
                 except (ValueError, SyntaxError, json.JSONDecodeError):
                     pass
         else:
-            frames = evenly_spaced(frame_paths(source, record), 4)
             if not frames:
-                analysis = {"status": "no_keyframes"}
+                analysis = {
+                    "status": "no_keyframes",
+                    "frames": [],
+                    "model": MODELS["vision"],
+                    "cache_version": VISION_CACHE_VERSION,
+                }
                 write_json(cached, analysis)
             else:
                 images = []
                 for frame in frames:
                     with Image.open(frame) as image:
                         images.append(image.convert("RGB").copy())
-                content = [{"type": "image"} for _ in images]
+                content = [{"type": "image", "image": image} for image in images]
                 content.append({"type": "text", "text": VISION_PROMPT})
                 messages = [{"role": "user", "content": content}]
                 inputs = processor.apply_chat_template(
@@ -193,14 +213,9 @@ def run(records, source, output, model_cache, force=False, offline=False):
                     tokenize=True,
                     add_generation_prompt=True,
                     return_dict=True,
-    return_tensors="pt"
+                    return_tensors="pt",
                 )
-                inputs = inputs.to(device)
-                # inputs = processor(text=prompt, images=images, return_tensors="pt")
-                # inputs = {
-                #     key: value.to(device=device, dtype=dtype) if value.is_floating_point() else value.to(device)
-                #     for key, value in inputs.items()
-                # }
+                inputs = inputs.to(model.device)
                 with torch.inference_mode():
                     output_ids = model.generate(
                         **inputs,
@@ -218,8 +233,9 @@ def run(records, source, output, model_cache, force=False, offline=False):
                     analysis["status"] = "ok"
                 except (ValueError, SyntaxError, json.JSONDecodeError) as error:
                     analysis = {"status": "parse_error", "raw_output": generated, "error": str(error)}
-                analysis["frames"] = [frame.relative_to(source).as_posix() for frame in frames]
+                analysis["frames"] = expected_frames
                 analysis["model"] = MODELS["vision"]
+                analysis["cache_version"] = VISION_CACHE_VERSION
                 write_json(cached, analysis)
 
         if analysis.get("status") == "ok":
@@ -227,6 +243,7 @@ def run(records, source, output, model_cache, force=False, offline=False):
                 "status": "ok",
                 "frames": analysis.get("frames") or [],
                 "model": analysis.get("model") or MODELS["vision"],
+                "cache_version": VISION_CACHE_VERSION,
             }
             analysis = normalize_vision_analysis(analysis)
             analysis.update(metadata)

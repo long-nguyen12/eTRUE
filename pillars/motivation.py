@@ -1,6 +1,6 @@
 """Original-context and motivation mismatch rules."""
 
-from pillars.date import first_year
+from pillars.date import compare_date_values
 from utils.text import word_overlap
 
 
@@ -31,16 +31,26 @@ def apply_motivation_rules(verification, protected_source):
     motivation = verification["motivation"]
     source = verification["source"]
 
-    if protected_source:
+    context = motivation.get("original_context_category")
+    if context not in CONTEXT_CATEGORIES:
+        context = None
+        motivation["original_context_category"] = None
+
+    if context is None and protected_source:
         motivation["original_context_category"] = "news report"
-    elif source.get("source_type") == "satire source":
+    elif context is None and source.get("source_type") == "satire source":
         motivation["original_context_category"] = "satire"
-    elif motivation.get("original_context_category"):
-        motivation["original_context_category"] = "unknown"
 
     context = motivation.get("original_context_category")
     mismatch = motivation.get("motivation_mismatch_type")
-    if not context:
+    claimed_framing = str(motivation.get("claimed_framing") or "").strip()
+    if not context or not claimed_framing:
+        motivation["motivation_mismatch_type"] = None
+        return
+    if mismatch not in MOTIVATION_MISMATCHES:
+        motivation["motivation_mismatch_type"] = None
+        return
+    if context == "unknown" and mismatch != "unknown":
         motivation["motivation_mismatch_type"] = None
         return
     if mismatch == "satire as real" and context != "satire":
@@ -48,9 +58,11 @@ def apply_motivation_rules(verification, protected_source):
     if mismatch == "entertainment as news" and context != "entertainment":
         motivation["motivation_mismatch_type"] = None
     if mismatch == "old news as current":
-        claimed_year = first_year(verification["date"].get("claimed_date"))
-        estimated_year = first_year(verification["date"].get("estimated_date"))
-        if not claimed_year or not estimated_year or estimated_year >= claimed_year:
+        comparison = compare_date_values(
+            verification["date"].get("estimated_date"),
+            verification["date"].get("claimed_date"),
+        )
+        if comparison != -1:
             motivation["motivation_mismatch_type"] = None
     if mismatch == "same":
         original_text = " ".join(

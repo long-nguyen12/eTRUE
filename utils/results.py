@@ -18,6 +18,7 @@ def readable_result(extra):
     return {
         "claim_id": extra["claim_id"],
         "claim": claim,
+        "review_status": (extra.get("review") or {}).get("status") or "not_started",
         "video_information": {
             "platform": video.get("platform"),
             "video_url": video.get("video_url"),

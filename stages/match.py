@@ -30,6 +30,7 @@ def run(records, source, output, threshold=0.95):
     clip_cache = output / "cache" / "clip"
     available = []
     frame_embeddings = {}
+    frame_names = {}
     frame_hashes = {}
     record_by_id = {record["claim_id"]: record for record in records}
     for record in records:
@@ -40,17 +41,27 @@ def run(records, source, output, threshold=0.95):
         embeddings = data["embeddings"].astype("float32")
         if not len(embeddings):
             continue
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        if not np.isfinite(norms).all() or (norms <= np.finfo("float32").eps).any():
+            continue
+        embeddings = embeddings / norms
+        paths = frame_paths(source, record)
+        names = [str(value) for value in data["frames"].tolist()]
+        if len(paths) != len(embeddings) or len(names) != len(embeddings):
+            continue
         claim_id = record["claim_id"]
         available.append(claim_id)
         frame_embeddings[claim_id] = embeddings
-        frame_hashes[claim_id] = [image_dhash(path) for path in frame_paths(source, record)]
+        frame_names[claim_id] = names
+        frame_hashes[claim_id] = [image_dhash(path) for path in paths]
 
     if len(available) < 2:
         print("match skipped: fewer than two CLIP records", flush=True)
         return
 
     means = np.stack([frame_embeddings[claim_id].mean(axis=0) for claim_id in available])
-    means /= np.linalg.norm(means, axis=1, keepdims=True)
+    mean_norms = np.linalg.norm(means, axis=1, keepdims=True)
+    means /= np.maximum(mean_norms, np.finfo("float32").eps)
     similarities = means @ means.T
     np.fill_diagonal(similarities, -1)
 
@@ -87,6 +98,18 @@ def run(records, source, output, threshold=0.95):
                 continue
             other = record_by_id[other_id]
             other_video = other["data"].get("video_information") or {}
+            matching_frames = []
+            for current_index, scores in enumerate(pair_scores):
+                other_index = int(scores.argmax())
+                score = float(scores[other_index])
+                if score >= 0.90:
+                    matching_frames.append(
+                        {
+                            "current": frame_names[claim_id][current_index],
+                            "candidate": frame_names[other_id][other_index],
+                            "similarity": round(min(score, 1.0), 4),
+                        }
+                    )
             matches.append(
                 {
                     "claim_id": other_id,
@@ -96,6 +119,7 @@ def run(records, source, output, threshold=0.95):
                     "frame_coverage": round(coverage, 4),
                     "perceptual_distance": best_hash_distance,
                     "perceptual_coverage": round(hash_coverage, 4),
+                    "matching_frames": matching_frames,
                 }
             )
         matches.sort(key=lambda item: (-item["similarity"], -item["frame_coverage"]))
@@ -132,10 +156,11 @@ def run(records, source, output, threshold=0.95):
                 evidence_ids,
             )
 
+        current_date = extra["verification"]["date"].get("video_upload_date")
         dated = [
             {
                 "claim_id": claim_id,
-                "date": extra["verification"]["date"].get("video_upload_date"),
+                "date": current_date,
                 "url": extra["normalized_video_information"].get("video_url"),
             }
         ] + [match for match in matches if match.get("date")]
@@ -144,10 +169,25 @@ def run(records, source, output, threshold=0.95):
             earliest = min(dated, key=lambda item: item["date"])
             provenance["earliest_known_url"] = earliest.get("url")
             provenance["earliest_known_date"] = earliest.get("date")
-            if earliest["claim_id"] != claim_id:
+            if (
+                earliest["claim_id"] != claim_id
+                and current_date
+                and earliest["date"] < current_date
+            ):
                 provenance["provenance_status"] = "earlier version found"
+                date_fields = extra["verification"]["date"]
+                online_dates = [
+                    value
+                    for value in (
+                        date_fields.get("earliest_online_date"),
+                        earliest.get("date"),
+                    )
+                    if value
+                ]
+                if online_dates:
+                    date_fields["earliest_online_date"] = min(online_dates)
                 earlier = record_by_id[earliest["claim_id"]]["data"].get("video_information") or {}
-                context = " â€” ".join(
+                context = " - ".join(
                     value
                     for value in [
                         earlier.get("video_headline"),
@@ -161,6 +201,7 @@ def run(records, source, output, threshold=0.95):
                     "verification.provenance.earliest_known_url",
                     "verification.provenance.earliest_known_date",
                     "verification.provenance.previous_context_summary",
+                    "verification.date.earliest_online_date",
                 ):
                     add_field_evidence(extra, field, evidence_ids)
         mark_automated(extra, "local_visual_matching", {"match_count": len(matches)})
