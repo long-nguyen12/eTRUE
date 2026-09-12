@@ -2,7 +2,8 @@
 
 from build_etrue import normalize_date
 from stages import MODELS
-from utils.evidence import add_evidence, add_field_evidence, mark_automated, remove_evidence_type
+from stages.clip import embed_keyframes
+from utils.evidence import add_evidence, add_field_evidence, remove_evidence_type
 from utils.files import read_json, trim, write_json
 from utils.records import frame_paths, sidecar_path
 
@@ -23,22 +24,21 @@ def hash_distance(first, second):
     return bin(first ^ second).count("1")
 
 
-def run(records, source, output, threshold=0.95):
+def run(records, source, output, model_cache, threshold=0.95, offline=False):
     """Keep CLIP candidates only when perceptual hashes also agree."""
     import numpy as np
 
-    clip_cache = output / "cache" / "clip"
+    clip_results = embed_keyframes(records, source, model_cache, offline)
     available = []
     frame_embeddings = {}
     frame_names = {}
     frame_hashes = {}
     record_by_id = {record["claim_id"]: record for record in records}
     for record in records:
-        path = clip_cache / (record["claim_id"] + ".npz")
-        if not path.exists():
+        item = clip_results.get(record["claim_id"])
+        if not item:
             continue
-        data = np.load(path, allow_pickle=False)
-        embeddings = data["embeddings"].astype("float32")
+        embeddings = np.asarray(item["embeddings"], dtype="float32")
         if not len(embeddings):
             continue
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
@@ -46,7 +46,7 @@ def run(records, source, output, threshold=0.95):
             continue
         embeddings = embeddings / norms
         paths = frame_paths(source, record)
-        names = [str(value) for value in data["frames"].tolist()]
+        names = [str(value) for value in item["frames"]]
         if len(paths) != len(embeddings) or len(names) != len(embeddings):
             continue
         claim_id = record["claim_id"]
@@ -141,7 +141,7 @@ def run(records, source, output, threshold=0.95):
                 add_evidence(
                     extra,
                     "local_visual_match",
-                    "cache/clip/" + claim_id + ".npz",
+                    record_by_id[claim_id]["path"].relative_to(source).as_posix(),
                     "Keyframes match local claim {0} (similarity {1}, coverage {2}).".format(
                         match["claim_id"], match["similarity"], match["frame_coverage"]
                     ),
@@ -204,7 +204,9 @@ def run(records, source, output, threshold=0.95):
                     "verification.date.earliest_online_date",
                 ):
                     add_field_evidence(extra, field, evidence_ids)
-        mark_automated(extra, "local_visual_matching", {"match_count": len(matches)})
+        extra.setdefault("automation", {})["local_visual_matching"] = {
+            "match_count": len(matches)
+        }
         write_json(sidecar_file, extra)
         if number % 100 == 0:
             print("match", number, "/", len(available), flush=True)

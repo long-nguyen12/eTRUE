@@ -12,7 +12,6 @@ from pathlib import Path
 from stages import PIPELINE_STAGES
 from stages.audit import run as run_audit
 from stages.bootstrap import run as run_bootstrap
-from stages.clip import run as run_clip
 from stages.geocode import run as run_geocode
 from stages.location import run as run_location
 from stages.match import run as run_matches
@@ -30,7 +29,9 @@ def parse_args():
     parser.add_argument("--output", type=Path, default=Path("data/eTRUE"))
     parser.add_argument("--ids", default="data/eTRUE/pilot.txt", help="ID file or 'all'")
     parser.add_argument("--limit", type=int, default=None, help="Limit the number of records to process")
-    parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing bootstrap fields"
+    )
     parser.add_argument("--offline", action="store_true", help="Load Hugging Face models from cache only")
     parser.add_argument("--clip-threshold", type=float, default=0.95)
     return parser.parse_args()
@@ -41,22 +42,27 @@ def run_stage(stage, args, records, model_cache):
     print("starting", stage, "for", len(records), "records", flush=True)
     if stage == "bootstrap":
         run_bootstrap(records, args.source, args.output, args.force)
-    elif stage == "clip":
-        run_clip(records, args.source, args.output, model_cache, args.force, args.offline)
     elif stage == "match":
-        run_matches(records, args.source, args.output, args.clip_threshold)
+        run_matches(
+            records,
+            args.source,
+            args.output,
+            model_cache,
+            args.clip_threshold,
+            args.offline,
+        )
     elif stage == "vision":
-        run_vision(records, args.source, args.output, model_cache, args.force, args.offline)
+        run_vision(records, args.source, args.output, model_cache, args.offline)
     elif stage == "web":
-        run_web(records, args.output, args.force)
+        run_web(records, args.output)
     elif stage == "search":
-        run_search(records, args.source, args.output, args.force)
+        run_search(records, args.source, args.output)
     elif stage == "text":
-        run_text(records, args.output, model_cache, args.force, args.offline)
+        run_text(records, args.output, model_cache, args.offline)
     elif stage == "location":
-        run_location(records, args.output, model_cache, args.force, args.offline)
+        run_location(records, args.output, model_cache, args.offline)
     elif stage == "geocode":
-        run_geocode(records, args.output, args.force)
+        run_geocode(records, args.output)
     elif stage == "audit":
         run_audit(records, args.output)
 

@@ -1,17 +1,13 @@
 """Geocode verified locations and compare them with claimed locations."""
 
-import hashlib
 import re
 import time
 import unicodedata
 from urllib.parse import quote
 
-from utils.evidence import add_evidence, add_field_evidence, mark_automated, remove_evidence_type
+from utils.evidence import add_evidence, add_field_evidence, remove_evidence_type
 from utils.files import now, read_json, write_json
 from utils.records import sidecar_path
-
-
-GEOCODE_CACHE_VERSION = 2
 
 
 def normalized(value):
@@ -140,18 +136,7 @@ def classify_location_mismatch(claimed, verified, claimed_row=None, verified_row
     return "unknown"
 
 
-def geocode(query, cache, session, force, context=()):
-    key = hashlib.sha256(query.casefold().encode("utf-8")).hexdigest()[:16]
-    cached = cache / (key + ".json")
-    if cached.exists() and not force:
-        saved = read_json(cached)
-        if saved.get("cache_version") == GEOCODE_CACHE_VERSION:
-            rows = saved.get("candidates")
-            if isinstance(rows, list):
-                row, selection = select_geocode_candidate(query, rows, context)
-                return {**saved, "result": row, "selection": selection}
-            return saved
-
+def geocode(query, session, context=()):
     try:
         response = session.get(
             "https://nominatim.openstreetmap.org/search",
@@ -162,7 +147,6 @@ def geocode(query, cache, session, force, context=()):
         rows = response.json()
         row, selection = select_geocode_candidate(query, rows, context)
         result = {
-            "cache_version": GEOCODE_CACHE_VERSION,
             "query": query,
             "retrieved_at": now(),
             "candidates": rows,
@@ -171,23 +155,19 @@ def geocode(query, cache, session, force, context=()):
         }
     except Exception as error:
         result = {
-            "cache_version": GEOCODE_CACHE_VERSION,
             "query": query,
             "retrieved_at": now(),
             "result": None,
             "error": str(error),
         }
-    write_json(cached, result)
     if not result.get("error"):
         time.sleep(1.1)
     return result
 
 
-def run(records, output, force=False):
+def run(records, output):
     import requests
 
-    cache = output / "cache" / "geocode"
-    cache.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
     session.headers["User-Agent"] = "eTRUE-research-dataset/1.0"
 
@@ -202,11 +182,10 @@ def run(records, output, force=False):
             location["verified_coordinates"] = None
             location["location_mismatch_type"] = None
             remove_evidence_type(extra, "geocoder_result")
-            mark_automated(
-                extra,
-                "geocode",
-                {"status": "skipped", "reason": "no verified location"},
-            )
+            extra.setdefault("automation", {})["geocode"] = {
+                "status": "skipped",
+                "reason": "no verified location",
+            }
             write_json(sidecar_file, extra)
             continue
 
@@ -230,18 +209,14 @@ def run(records, output, force=False):
             or normalized(claimed) == normalized(verified)
             or normalized(value) != normalized(claimed)
         ]
-        results = {
-            "verified": geocode(verified, cache, session, force, verified_context)
-        }
+        results = {"verified": geocode(verified, session, verified_context)}
         if claimed:
             results["claimed"] = (
                 results["verified"]
                 if normalized(claimed) == normalized(verified)
                 else geocode(
                     claimed,
-                    cache,
                     session,
-                    force,
                     [
                         value
                         for value in contextual_candidates
@@ -252,15 +227,11 @@ def run(records, output, force=False):
 
         verified_row = results["verified"].get("result")
         if not verified_row:
-            mark_automated(
-                extra,
-                "geocode",
-                {
-                    "status": "error",
-                    "reason": "no geocoder result for verified location",
-                    **results,
-                },
-            )
+            extra.setdefault("automation", {})["geocode"] = {
+                "status": "error",
+                "reason": "no geocoder result for verified location",
+                **results,
+            }
             write_json(sidecar_file, extra)
             continue
 
@@ -306,7 +277,7 @@ def run(records, output, force=False):
                 list(dict.fromkeys(evidence_ids.values())),
             )
 
-        mark_automated(extra, "geocode", {"status": "ok", **results})
+        extra.setdefault("automation", {})["geocode"] = {"status": "ok", **results}
         write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("geocode", number, "/", len(records), flush=True)

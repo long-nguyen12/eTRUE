@@ -24,7 +24,6 @@ def run(records, output):
     unsupported = []
     dangling_links = []
     stage_issues = []
-    review_status = Counter()
     evidence_types = Counter()
     for record in records:
         extra = read_json(sidecar_path(output, record["claim_id"]))
@@ -64,7 +63,6 @@ def run(records, output):
                         "errors": errors[:3] if isinstance(errors, list) else [str(errors)],
                     }
                 )
-        review_status[(extra.get("review") or {}).get("status") or "missing"] += 1
         evidence_types.update(evidence.get("type") for evidence in extra.get("evidence", []))
     report = {
         "samples": len(records),
@@ -75,7 +73,6 @@ def run(records, output):
         "dangling_examples": dangling_links[:50],
         "stage_issues": len(stage_issues),
         "stage_issue_examples": stage_issues[:50],
-        "review_status": dict(sorted(review_status.items())),
         "evidence_types": dict(sorted(evidence_types.items())),
         "models": MODELS,
         "generated_at": now(),

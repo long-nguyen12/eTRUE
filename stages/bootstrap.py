@@ -2,7 +2,7 @@
 
 from build_etrue import normalize_date
 from pillars.source import OFFICIAL_SOURCES
-from utils.evidence import add_evidence, add_field_evidence, mark_automated, remove_evidence_type
+from utils.evidence import add_evidence, add_field_evidence, remove_evidence_type
 from utils.files import read_json, trim, write_json
 from utils.records import sidecar_path
 
@@ -111,15 +111,11 @@ def run(records, source, output, force=False):
             ):
                 add_field_evidence(extra, field, [metadata_evidence])
 
-        mark_automated(
-            extra,
-            "bootstrap",
-            {
-                "claim_evidence": claim_evidence,
-                "metadata_evidence": metadata_evidence,
-                "article_evidence": article_evidence,
-            },
-        )
+        extra.setdefault("automation", {})["bootstrap"] = {
+            "claim_evidence": claim_evidence,
+            "metadata_evidence": metadata_evidence,
+            "article_evidence": article_evidence,
+        }
         write_json(path, extra)
         if number % 100 == 0:
             print("bootstrap", number, "/", len(records), flush=True)

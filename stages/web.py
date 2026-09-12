@@ -3,12 +3,10 @@
 from datetime import datetime
 
 from build_etrue import normalize_date
-from utils.evidence import add_evidence, mark_automated
+from utils.evidence import add_evidence
+from utils.errors import optional_result
 from utils.files import now, read_json, write_json
 from utils.records import sidecar_path
-
-
-WEB_CACHE_VERSION = 2
 
 
 def wayback_earliest(url, session):
@@ -70,43 +68,38 @@ def platform_metadata(url):
     return extracted
 
 
-def run(records, output, force=False):
+def run(records, output):
     """Retrieve current platform metadata and the first Wayback snapshot."""
     import requests
 
-    cache = output / "cache" / "web"
-    cache.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
     session.headers["User-Agent"] = "eTRUE-research-dataset/1.0"
     for number, record in enumerate(records, 1):
-        cached = cache / (record["claim_id"] + ".json")
-        if cached.exists() and not force:
-            result = read_json(cached)
-        else:
-            result = None
-        if not result or result.get("cache_version") != WEB_CACHE_VERSION:
-            url = (record["data"].get("video_information") or {}).get("video_url")
+        url = (record["data"].get("video_information") or {}).get("video_url")
+        if url and "https://www.youtube.com/embed/" in url:
+            url = url.replace("https://www.youtube.com/embed/", "https://www.youtube.com/watch?v=")
 
-            if url and "https://www.youtube.com/embed/" in url:
-                url = url.replace("https://www.youtube.com/embed/", "https://www.youtube.com/watch?v=")
-
-            result = {
-                "status": "ok",
-                "cache_version": WEB_CACHE_VERSION,
-                "retrieved_at": now(),
-                "url": url,
-                "errors": [],
-            }
-            if url:
-                try:
-                    result["platform_metadata"] = platform_metadata(url)
-                except Exception as error:
-                    result["errors"].append("platform_metadata: " + str(error))
-                try:
-                    result["wayback"] = wayback_earliest(url, session)
-                except Exception as error:
-                    result["errors"].append("wayback: " + str(error))
-            write_json(cached, result)
+        result = {
+            "status": "ok",
+            "retrieved_at": now(),
+            "url": url,
+            "errors": [],
+        }
+        if url:
+            metadata = optional_result(
+                result["errors"],
+                "platform_metadata",
+                lambda: platform_metadata(url),
+            )
+            if metadata is not None:
+                result["platform_metadata"] = metadata
+            archive = optional_result(
+                result["errors"],
+                "wayback",
+                lambda: wayback_earliest(url, session),
+            )
+            if archive is not None:
+                result["wayback"] = archive
 
         sidecar_file = sidecar_path(output, record["claim_id"])
         extra = read_json(sidecar_file)
@@ -158,7 +151,7 @@ def run(records, output, force=False):
                 archive=archive,
             )
             extra["verification"]["date"]["earliest_online_date"] = archive["date"]
-        mark_automated(extra, "web", result)
+        extra.setdefault("automation", {})["web"] = result
         write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("web", number, "/", len(records), flush=True)

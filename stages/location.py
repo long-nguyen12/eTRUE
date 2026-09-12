@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from pillars.location import location_candidate_is_plausible
 from stages import MODELS
-from utils.evidence import add_evidence, add_field_evidence, mark_automated, remove_evidence_type
+from utils.evidence import add_evidence, add_field_evidence, remove_evidence_type
 from utils.files import read_json, trim, write_json
 from utils.model_output import release_models
 from utils.records import sidecar_path
@@ -18,8 +18,6 @@ LOCATION_FIELDS = (
     "verified_coordinates",
     "location_mismatch_type",
 )
-
-LOCATION_CACHE_VERSION = 3
 
 EVENT_TERMS = re.compile(
     r"\b(?:video|footage|clip|photo(?:graph)?|image|scene|incident|event|rally|protest|"
@@ -127,7 +125,7 @@ def build_sources(record, extra):
         add(
             "vision",
             visual_text,
-            "cache/vision/" + record["claim_id"] + ".json",
+            next(iter(vision.get("frames") or []), record["path"].as_posix()),
             vision.get("candidate_locations") or [],
             support_group="vision",
         )
@@ -511,32 +509,22 @@ def load_recognizer(model_cache, offline):
     return recognizer, model, tokenizer
 
 
-def run(records, output, model_cache, force=False, offline=False):
-    cache = output / "cache" / "location"
-    cache.mkdir(parents=True, exist_ok=True)
+def run(records, output, model_cache, offline=False):
     recognizer = model = tokenizer = None
 
     for number, record in enumerate(records, 1):
-        cached = cache / (record["claim_id"] + ".json")
         sidecar_file = sidecar_path(output, record["claim_id"])
         extra = read_json(sidecar_file)
-        if cached.exists() and not force:
-            result = read_json(cached)
-        else:
-            result = None
-        if not result or result.get("cache_version") != LOCATION_CACHE_VERSION:
-            if recognizer is None:
-                recognizer, model, tokenizer = load_recognizer(model_cache, offline)
-            result = {
-                "status": "ok",
-                "cache_version": LOCATION_CACHE_VERSION,
-                "model": MODELS["location"],
-                "candidates": extract_candidates(build_sources(record, extra), recognizer),
-            }
-            write_json(cached, result)
+        if recognizer is None:
+            recognizer, model, tokenizer = load_recognizer(model_cache, offline)
+        result = {
+            "status": "ok",
+            "model": MODELS["location"],
+            "candidates": extract_candidates(build_sources(record, extra), recognizer),
+        }
 
         apply_candidates(extra, result)
-        mark_automated(extra, "location", result)
+        extra.setdefault("automation", {})["location"] = result
         write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("location", number, "/", len(records), flush=True)

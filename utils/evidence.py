@@ -1,10 +1,7 @@
-"""Evidence creation, linking, and automated-review bookkeeping."""
+"""Evidence creation and linking."""
 
 import hashlib
 import json
-
-from utils.files import now
-
 
 def add_field_evidence(extra, field, evidence_ids):
     links = extra.setdefault("field_evidence", {}).setdefault(field, [])
@@ -52,11 +49,3 @@ def remove_evidence_type(extra, evidence_type):
             extra["field_evidence"][field] = remaining
         else:
             del extra["field_evidence"][field]
-
-
-def mark_automated(extra, stage, value):
-    extra.setdefault("automation", {})[stage] = value
-    review = extra.setdefault("review", {})
-    if review.get("status") in {None, "not_started", "automated"}:
-        review["status"] = "automated"
-    review["last_automated_at"] = now()

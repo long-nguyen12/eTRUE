@@ -4,7 +4,7 @@ import json
 
 from pillars.location import location_candidate_is_plausible
 from stages import MODELS
-from utils.evidence import add_evidence, add_field_evidence, mark_automated
+from utils.evidence import add_evidence, add_field_evidence
 from utils.files import read_json, trim, write_json
 from utils.model_output import parse_json_output, release_models
 from utils.records import frame_paths, sidecar_path
@@ -22,11 +22,6 @@ VISION_PROMPT = """Analyze all keyframes together. Return exactly one compact JS
 }
 Use at most three unique items per list. Use [] when absent. Never repeat an item.
 Do not guess a location from appearance alone. End immediately after the JSON object."""
-
-# Version 1 caches were produced without supplying the keyframe pixels to the
-# processor.  Requiring this version prevents those results from being reused.
-VISION_CACHE_VERSION = 2
-
 
 def normalize_vision_analysis(value):
     aliases = {
@@ -67,7 +62,9 @@ def normalize_vision_analysis(value):
         return normalized
 
     for key, item in value.items():
-        canonical = aliases.get("".join(character for character in key.lower() if character.isalnum()))
+        canonical = aliases.get(
+            "".join(character for character in key.lower() if character.isalnum())
+        )
         if not canonical:
             continue
         if canonical == "scene_summary":
@@ -77,7 +74,13 @@ def normalize_vision_analysis(value):
         elif item:
             normalized[canonical] = [item]
 
-    for key in ("ocr_text", "landmarks", "signs_and_logos", "languages", "terrain_and_weather"):
+    for key in (
+        "ocr_text",
+        "landmarks",
+        "signs_and_logos",
+        "languages",
+        "terrain_and_weather",
+    ):
         unique = []
         for item in normalized[key]:
             text = trim(item, 300)
@@ -94,7 +97,10 @@ def normalize_vision_analysis(value):
                 unique.append(text)
         normalized[key] = unique[:3]
 
-    if normalized["scene_summary"].lower() in {"short factual description", "short, factual description"}:
+    if normalized["scene_summary"].lower() in {
+        "short factual description",
+        "short, factual description",
+    }:
         normalized["scene_summary"] = ""
     if "no additional information provided" in normalized["scene_summary"].lower():
         normalized["scene_summary"] = ""
@@ -123,18 +129,18 @@ def normalize_vision_analysis(value):
 def evenly_spaced(items, maximum):
     if len(items) <= maximum:
         return items
-    indexes = [round(index * (len(items) - 1) / (maximum - 1)) for index in range(maximum)]
+    indexes = [
+        round(index * (len(items) - 1) / (maximum - 1)) for index in range(maximum)
+    ]
     return [items[index] for index in indexes]
 
 
-def run(records, source, output, model_cache, force=False, offline=False):
+def run(records, source, output, model_cache, offline=False):
     """Extract conservative scene, OCR, landmark, and location clues."""
     import torch
     from PIL import Image
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-    cache = output / "cache" / "vision"
-    cache.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Loading models on", device)
     dtype = torch.float16 if device == "cuda" else torch.float32
@@ -160,100 +166,65 @@ def run(records, source, output, model_cache, force=False, offline=False):
     print("Loaded models")
 
     for number, record in enumerate(records, 1):
-        cached = cache / (record["claim_id"] + ".json")
         frames = evenly_spaced(frame_paths(source, record), 4)
         expected_frames = [frame.relative_to(source).as_posix() for frame in frames]
-        use_cache = cached.exists() and not force
-        if use_cache:
-            analysis = read_json(cached)
-            use_cache = (
-                analysis.get("cache_version") == VISION_CACHE_VERSION
-                and (analysis.get("frames") or []) == expected_frames
-            )
-        if use_cache:
-            if analysis.get("status") == "parse_error" and analysis.get("raw_output"):
-                try:
-                    repaired = normalize_vision_analysis(parse_json_output(analysis["raw_output"]))
-                    repaired["status"] = "ok" if any(
-                        repaired.get(key)
-                        for key in (
-                            "scene_summary",
-                            "ocr_text",
-                            "landmarks",
-                            "signs_and_logos",
-                            "terrain_and_weather",
-                        )
-                    ) else "low_quality"
-                    repaired["frames"] = analysis.get("frames")
-                    repaired["model"] = MODELS["vision"]
-                    repaired["cache_version"] = VISION_CACHE_VERSION
-                    analysis = repaired
-                    write_json(cached, analysis)
-                except (ValueError, SyntaxError, json.JSONDecodeError):
-                    pass
-        else:
-            if not frames:
-                analysis = {
-                    "status": "no_keyframes",
-                    "frames": [],
-                    "model": MODELS["vision"],
-                    "cache_version": VISION_CACHE_VERSION,
-                }
-                write_json(cached, analysis)
-            else:
-                images = []
-                for frame in frames:
-                    with Image.open(frame) as image:
-                        images.append(image.convert("RGB").copy())
-                content = [{"type": "image", "image": image} for image in images]
-                content.append({"type": "text", "text": VISION_PROMPT})
-                messages = [{"role": "user", "content": content}]
-                inputs = processor.apply_chat_template(
-                    messages,
-                    tokenize=True,
-                    add_generation_prompt=True,
-                    return_dict=True,
-                    return_tensors="pt",
-                )
-                inputs = inputs.to(model.device)
-                with torch.inference_mode():
-                    output_ids = model.generate(
-                        **inputs,
-                        do_sample=False,
-                        max_new_tokens=256,
-                        repetition_penalty=1.15,
-                        no_repeat_ngram_size=6,
-                    )
-                generated = processor.decode(
-                    output_ids[0][inputs["input_ids"].shape[-1] :],
-                    skip_special_tokens=True,
-                )
-                try:
-                    analysis = normalize_vision_analysis(parse_json_output(generated))
-                    analysis["status"] = "ok"
-                except (ValueError, SyntaxError, json.JSONDecodeError) as error:
-                    analysis = {"status": "parse_error", "raw_output": generated, "error": str(error)}
-                analysis["frames"] = expected_frames
-                analysis["model"] = MODELS["vision"]
-                analysis["cache_version"] = VISION_CACHE_VERSION
-                write_json(cached, analysis)
-
-        if analysis.get("status") == "ok":
-            metadata = {
-                "status": "ok",
-                "frames": analysis.get("frames") or [],
-                "model": analysis.get("model") or MODELS["vision"],
-                "cache_version": VISION_CACHE_VERSION,
+        if not frames:
+            analysis = {
+                "status": "no_keyframes",
+                "frames": [],
+                "model": MODELS["vision"],
             }
-            analysis = normalize_vision_analysis(analysis)
-            analysis.update(metadata)
-            write_json(cached, analysis)
+        else:
+            images = []
+            for frame in frames:
+                with Image.open(frame) as image:
+                    images.append(image.convert("RGB").copy())
+            content = [{"type": "image", "image": image} for image in images]
+            content.append({"type": "text", "text": VISION_PROMPT})
+            messages = [{"role": "user", "content": content}]
+            inputs = processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+            inputs = inputs.to(model.device)
+            with torch.inference_mode():
+                output_ids = model.generate(
+                    **inputs,
+                    do_sample=False,
+                    max_new_tokens=256,
+                    repetition_penalty=1.15,
+                    no_repeat_ngram_size=6,
+                )
+            generated = processor.decode(
+                output_ids[0][inputs["input_ids"].shape[-1] :],
+                skip_special_tokens=True,
+            )
+            try:
+                analysis = normalize_vision_analysis(parse_json_output(generated))
+                analysis["status"] = "ok"
+            except (ValueError, SyntaxError, json.JSONDecodeError) as error:
+                analysis = {
+                    "status": "parse_error",
+                    "raw_output": generated,
+                    "error": str(error),
+                }
+            analysis["frames"] = expected_frames
+            analysis["model"] = MODELS["vision"]
 
         sidecar_file = sidecar_path(output, record["claim_id"])
         extra = read_json(sidecar_file)
         if analysis.get("status") == "ok":
             clues = []
-            for category in ("ocr_text", "landmarks", "signs_and_logos", "languages", "terrain_and_weather"):
+            for category in (
+                "ocr_text",
+                "landmarks",
+                "signs_and_logos",
+                "languages",
+                "terrain_and_weather",
+            ):
                 for value in analysis.get(category) or []:
                     clues.append({"type": category, "value": value})
             location = extra["verification"]["location"]
@@ -264,7 +235,7 @@ def run(records, source, output, model_cache, force=False, offline=False):
             evidence_id = add_evidence(
                 extra,
                 "keyframe_analysis",
-                "cache/vision/" + record["claim_id"] + ".json",
+                expected_frames[0],
                 analysis.get("scene_summary"),
                 fields=(
                     "verification.location.visual_location_clues",
@@ -273,8 +244,10 @@ def run(records, source, output, model_cache, force=False, offline=False):
                 model=MODELS["vision"],
                 frames=analysis.get("frames"),
             )
-            add_field_evidence(extra, "verification.location.visual_location_clues", [evidence_id])
-        mark_automated(extra, "vision", analysis)
+            add_field_evidence(
+                extra, "verification.location.visual_location_clues", [evidence_id]
+            )
+        extra.setdefault("automation", {})["vision"] = analysis
         write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("vision", number, "/", len(records), flush=True)

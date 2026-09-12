@@ -11,15 +11,13 @@ from urllib.parse import urljoin, urlsplit
 from build_etrue import normalize_date
 from pillars.provenance import apply_search_provenance
 from stages.web import wayback_earliest
-from utils.evidence import add_evidence, mark_automated, remove_evidence_type
+from utils.evidence import add_evidence, remove_evidence_type
+from utils.errors import optional_result
 from utils.files import now, read_json, trim, write_json
 from utils.records import frame_paths, sidecar_path
 
 BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 GOOGLE_VISION_URL = "https://vision.googleapis.com/v1/images:annotate"
-SEARCH_CACHE_VERSION = 4
-
-
 def quoted_phrase(value):
     text = re.sub(r"\s+", " ", str(value or "")).strip().replace('"', "")
     words = text.split()
@@ -140,11 +138,8 @@ def clean_html_text(value, length):
 
 
 def frame_name(frame, source):
-    if source:
-        try:
-            return frame.relative_to(source).as_posix()
-        except ValueError:
-            pass
+    if source and frame.is_relative_to(source):
+        return frame.relative_to(source).as_posix()
     return frame.name
 
 
@@ -465,98 +460,93 @@ def candidate_page_metadata(session, url):
     return {key: value for key, value in metadata.items() if value}
 
 
-def enrich_image_pages(session, image_search):
-    errors = image_search.setdefault("errors", [])
-    for page in image_search.get("pages") or []:
-        try:
-            metadata = candidate_page_metadata(session, page["url"])
-            page.update(metadata)
-        except Exception as error:
-            errors.append(page["url"] + " metadata: " + str(error))
+def enrich_candidates(session, candidates, errors):
+    """Add page metadata and archive dates without failing the search stage."""
+    for item in candidates:
+        metadata = optional_result(
+            errors,
+            item["url"] + " metadata",
+            lambda item=item: candidate_page_metadata(session, item["url"]),
+        )
+        if metadata:
+            item.update(metadata)
 
-        archive_target = page.get("canonical_url") or page.get("final_url") or page["url"]
+        archive_target = (
+            item.get("canonical_url") or item.get("final_url") or item["url"]
+        )
         if not public_http_url(archive_target):
             continue
-        try:
-            archive = wayback_earliest(archive_target, session)
-            if archive:
-                page["archive_first_seen"] = archive["date"]
-                page["archive_url"] = archive["snapshot_url"]
-        except Exception as error:
-            errors.append(page["url"] + " Wayback: " + str(error))
+        archive = optional_result(
+            errors,
+            item["url"] + " Wayback",
+            lambda archive_target=archive_target: wayback_earliest(
+                archive_target, session
+            ),
+        )
+        if archive:
+            item["archive_first_seen"] = archive["date"]
+            item["archive_url"] = archive["snapshot_url"]
+
+
+def enrich_image_pages(session, image_search):
+    enrich_candidates(
+        session,
+        image_search.get("pages") or [],
+        image_search.setdefault("errors", []),
+    )
     return image_search
 
 
 def enrich_text_results(session, result, maximum=5):
     """Attach page and archive metadata to a bounded set of search hits."""
-    for item in (result.get("results") or [])[:maximum]:
-        try:
-            item.update(candidate_page_metadata(session, item["url"]))
-        except Exception as error:
-            result["errors"].append(item["url"] + " metadata: " + str(error))
-
-        archive_target = item.get("canonical_url") or item.get("final_url") or item["url"]
-        if not public_http_url(archive_target):
-            continue
-        try:
-            archive = wayback_earliest(archive_target, session)
-            if archive:
-                item["archive_first_seen"] = archive["date"]
-                item["archive_url"] = archive["snapshot_url"]
-        except Exception as error:
-            result["errors"].append(item["url"] + " Wayback: " + str(error))
+    enrich_candidates(
+        session,
+        (result.get("results") or [])[:maximum],
+        result["errors"],
+    )
     return result
 
 
 def search_record(record, extra, source, session, brave_key, vision_key):
     result = {
         "status": "ok",
-        "cache_version": SEARCH_CACHE_VERSION,
         "retrieved_at": now(),
         "results": [],
         "errors": [],
     }
-    if brave_key:
-        result["search_provider"] = "Brave Search"
-        seen = set()
-        for query_spec in build_query_specs(record, extra):
-            query = query_spec["query"]
-            try:
-                for item in brave_results(session, brave_key, query):
-                    if item["url"] not in seen:
-                        seen.add(item["url"])
-                        item["query_type"] = query_spec["query_type"]
-                        result["results"].append(item)
-            except Exception as error:
-                result["errors"].append("Brave " + query + ": " + str(error))
-    else:
-        result["search_provider"] = "DDGS"
-        seen = set()
-        for query_spec in build_query_specs(record, extra):
-            query = query_spec["query"]
-            try:
-                for item in ddgs_results(query):
-                    if item["url"] not in seen:
-                        seen.add(item["url"])
-                        item["query_type"] = query_spec["query_type"]
-                        result["results"].append(item)
-            except Exception as error:
-                result["errors"].append("DDGS " + query + ": " + str(error))
+    result["search_provider"] = "Brave Search" if brave_key else "DDGS"
+    seen = set()
+    for query_spec in build_query_specs(record, extra):
+        query = query_spec["query"]
+        items = optional_result(
+            result["errors"],
+            result["search_provider"] + " " + query,
+            lambda query=query: brave_results(session, brave_key, query)
+            if brave_key
+            else ddgs_results(query),
+        )
+        for item in items or []:
+            if item["url"] not in seen:
+                seen.add(item["url"])
+                item["query_type"] = query_spec["query_type"]
+                result["results"].append(item)
     if session is not None:
         enrich_text_results(session, result)
     frames = frame_paths(source, record)
     if vision_key and frames:
         selected_frames = select_keyframes(frames)
-        try:
-            result["image_search"] = google_image_matches(
+        image_search = optional_result(
+            result["errors"],
+            "Google Vision",
+            lambda: google_image_matches(
                 session,
                 vision_key,
                 selected_frames,
                 source=source,
-            )
-            enrich_image_pages(session, result["image_search"])
-        except Exception as error:
-            result["errors"].append("Google Vision: " + str(error))
+            ),
+        )
+        if image_search is not None:
+            result["image_search"] = enrich_image_pages(session, image_search)
     elif not vision_key:
         result["image_search_status"] = (
             "skipped: GOOGLE_CLOUD_VISION_API_KEY is not set"
@@ -635,32 +625,22 @@ def add_search_evidence(extra, result):
     return evidence_by_url
 
 
-def run(records, source, output, force=False):
+def run(records, source, output):
     import requests
     from dotenv import load_dotenv
 
     load_dotenv()
-    cache = output / "cache" / "search"
-    cache.mkdir(parents=True, exist_ok=True)
     brave_key = os.environ.get("BRAVE_SEARCH_API_KEY")
     vision_key = os.environ.get("GOOGLE_CLOUD_VISION_API_KEY")
     session = requests.Session()
     session.headers["User-Agent"] = "eTRUE-research-dataset/1.0"
 
     for number, record in enumerate(records, 1):
-        cached = cache / (record["claim_id"] + ".json")
         sidecar_file = sidecar_path(output, record["claim_id"])
         extra = read_json(sidecar_file)
-
-        if cached.exists() and not force:
-            result = read_json(cached)
-        else:
-            result = None
-        if not result or result.get("cache_version") != SEARCH_CACHE_VERSION:
-            result = search_record(
-                record, extra, source, session, brave_key, vision_key
-            )
-            write_json(cached, result)
+        result = search_record(
+            record, extra, source, session, brave_key, vision_key
+        )
 
         if result.get("status") == "ok":
             evidence_by_url = add_search_evidence(extra, result)
@@ -670,7 +650,7 @@ def run(records, source, output, force=False):
                 evidence_by_url,
                 result.get("results") or [],
             )
-        mark_automated(extra, "search", result)
+        extra.setdefault("automation", {})["search"] = result
         write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("search", number, "/", len(records), flush=True)
