@@ -544,6 +544,7 @@ def generate_prompt_result(model, tokenizer, device, job, evidence):
         output_ids[0][inputs["input_ids"].shape[-1] :],
         skip_special_tokens=True,
     )
+    print("text", job["name"], "model output:", generated, flush=True)
 
     try:
         analysis = parse_json_output(generated)
