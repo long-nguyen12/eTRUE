@@ -1,10 +1,7 @@
-"""Visual candidates and claimed-versus-verified location rules."""
-
 import re
 
 from utils.evidence import add_field_evidence
 from utils.files import trim
-from utils.text import text_value_is_grounded
 
 
 LOCATION_MISMATCHES = {

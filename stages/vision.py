@@ -1,5 +1,3 @@
-"""Analyze extracted keyframes for visual verification clues."""
-
 import json
 
 from pillars.location import location_candidate_is_plausible
@@ -8,7 +6,6 @@ from utils.evidence import add_evidence, add_field_evidence
 from utils.files import read_json, trim, write_json
 from utils.model_output import parse_json_output, release_models
 from utils.records import frame_paths, sidecar_path
-
 
 VISION_PROMPT = """Analyze all keyframes together. Return exactly one compact JSON object:
 {
@@ -22,6 +19,7 @@ VISION_PROMPT = """Analyze all keyframes together. Return exactly one compact JS
 }
 Use at most three unique items per list. Use [] when absent. Never repeat an item.
 Do not guess a location from appearance alone. End immediately after the JSON object."""
+
 
 def normalize_vision_analysis(value):
     aliases = {
@@ -136,7 +134,6 @@ def evenly_spaced(items, maximum):
 
 
 def run(records, source, output, model_cache, offline=False):
-    """Extract conservative scene, OCR, landmark, and location clues."""
     import torch
     from PIL import Image
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration

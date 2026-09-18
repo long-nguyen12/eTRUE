@@ -1,12 +1,9 @@
-"""Retrieve public platform metadata and archive records."""
-
 from datetime import datetime
 
-from build_etrue import normalize_date
 from utils.evidence import add_evidence
 from utils.errors import optional_result
 from utils.files import now, read_json, write_json
-from utils.records import sidecar_path
+from utils.records import normalize_date, sidecar_path
 
 
 def wayback_earliest(url, session):
@@ -69,7 +66,6 @@ def platform_metadata(url):
 
 
 def run(records, output):
-    """Retrieve current platform metadata and the first Wayback snapshot."""
     import requests
 
     session = requests.Session()

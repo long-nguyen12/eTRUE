@@ -1,5 +1,3 @@
-"""Original-context and motivation mismatch rules."""
-
 from pillars.date import compare_date_values
 from utils.text import word_overlap
 

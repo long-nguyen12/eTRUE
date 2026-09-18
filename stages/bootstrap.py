@@ -1,10 +1,7 @@
-"""Import claims, metadata, articles, and existing TRUE evidence."""
-
-from build_etrue import normalize_date
 from pillars.source import OFFICIAL_SOURCES
 from utils.evidence import add_evidence, add_field_evidence, remove_evidence_type
 from utils.files import read_json, trim, write_json
-from utils.records import sidecar_path
+from utils.records import normalize_date, sidecar_path
 
 
 def import_existing_evidence(extra, data):

@@ -6,7 +6,6 @@ from collections import Counter
 from stages import MODELS
 from utils.files import now, read_json, write_json
 from utils.records import sidecar_path
-from utils.results import write_readable_result
 
 
 def verification_fields(extra):
@@ -27,7 +26,6 @@ def run(records, output):
     evidence_types = Counter()
     for record in records:
         extra = read_json(sidecar_path(output, record["claim_id"]))
-        write_readable_result(extra, output)
         links = extra.get("field_evidence", {})
         evidence_ids = {
             evidence.get("id")

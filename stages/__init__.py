@@ -2,7 +2,6 @@
 
 MODELS = {
     "clip": "openai/clip-vit-base-patch32",
-    # "vision": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
     "vision": "Qwen/Qwen3-VL-4B-Instruct",
     "text": "Qwen/Qwen3-4B",
     "location": "dslim/bert-base-NER",
@@ -18,4 +17,5 @@ PIPELINE_STAGES = (
     "location",
     "geocode",
     "audit",
+    "export",
 )

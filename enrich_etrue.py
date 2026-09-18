@@ -12,6 +12,7 @@ from pathlib import Path
 from stages import PIPELINE_STAGES
 from stages.audit import run as run_audit
 from stages.bootstrap import run as run_bootstrap
+from stages.export import run as run_export
 from stages.geocode import run as run_geocode
 from stages.location import run as run_location
 from stages.match import run as run_matches
@@ -65,6 +66,8 @@ def run_stage(stage, args, records, model_cache):
         run_geocode(records, args.output)
     elif stage == "audit":
         run_audit(records, args.output)
+    elif stage == "export":
+        run_export(records, args.output)
 
 
 def main():

@@ -1,5 +1,3 @@
-"""Source and uploader validation rules."""
-
 import re
 import unicodedata
 from urllib.parse import unquote, urlparse

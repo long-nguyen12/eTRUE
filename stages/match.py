@@ -1,11 +1,10 @@
 """Confirm local near-duplicate videos with CLIP and perceptual hashes."""
 
-from build_etrue import normalize_date
 from stages import MODELS
 from stages.clip import embed_keyframes
 from utils.evidence import add_evidence, add_field_evidence, remove_evidence_type
 from utils.files import read_json, trim, write_json
-from utils.records import frame_paths, sidecar_path
+from utils.records import frame_paths, normalize_date, sidecar_path
 
 
 def image_dhash(path):

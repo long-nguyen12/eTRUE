@@ -40,3 +40,4 @@ Thumbs.db
 .agents/
 .codex/
 data/
+tests/

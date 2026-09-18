@@ -1,5 +1,3 @@
-"""Claimed, upload, and estimated-date validation rules."""
-
 import calendar
 import re
 from datetime import date, datetime
@@ -16,11 +14,6 @@ class _ParsedDate(NamedTuple):
     granularity: str
     normalized: str
     endpoints: tuple
-
-
-def first_year(value):
-    match = re.search(r"(?:19|20)\d{2}", str(value or ""))
-    return int(match.group(0)) if match else None
 
 
 def _clean_date_text(value):
@@ -173,22 +166,6 @@ def _parse_date_value(value):
         left.normalized + " to " + right.normalized,
         left.endpoints + right.endpoints,
     )
-
-
-def normalize_date_value(value):
-    """Normalize a supported date or date range while retaining unsupported text."""
-    parsed = _parse_date_value(value)
-    return parsed.normalized if parsed else value
-
-
-def parse_date_parts(value):
-    parsed = _single_date(value)
-    return parsed.endpoints[0] if parsed else None
-
-
-def infer_date_granularity(value):
-    parsed = _parse_date_value(value)
-    return parsed.granularity if parsed else "unknown"
 
 
 def _parts_are_grounded(parts, evidence, shared_year=False):

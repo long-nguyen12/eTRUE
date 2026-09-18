@@ -1,9 +1,7 @@
-"""Provenance-specific grounding and consistency rules."""
-
 import re
 
-from build_etrue import canonical_video_key, normalize_date
 from utils.evidence import add_field_evidence
+from utils.records import canonical_video_key, normalize_date
 from utils.text import containment_overlap
 
 
@@ -164,8 +162,6 @@ def apply_search_provenance(
         if evidence_id:
             match_evidence.append(evidence_id)
 
-    # Stable de-duplication matters when a canonical URL differs from the URL
-    # returned by Web Detection.
     merged = {}
     for match in matches:
         key = _url_key(match.get("url")) or match.get("claim_id")
