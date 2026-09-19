@@ -136,7 +136,7 @@ def evenly_spaced(items, maximum):
 def run(records, source, output, model_cache, offline=False):
     import torch
     from PIL import Image
-    from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+    from transformers import AutoModelForMultimodalLM, AutoProcessor
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Loading models on", device)
@@ -153,7 +153,7 @@ def run(records, source, output, model_cache, offline=False):
     }
     if device == "cuda":
         model_options["device_map"] = "auto"
-    model = Qwen3VLForConditionalGeneration.from_pretrained(
+    model = AutoModelForMultimodalLM.from_pretrained(
         MODELS["vision"],
         **model_options,
     )
@@ -183,6 +183,7 @@ def run(records, source, output, model_cache, offline=False):
                 messages,
                 tokenize=True,
                 add_generation_prompt=True,
+                enable_thinking=False,
                 return_dict=True,
                 return_tensors="pt",
             )

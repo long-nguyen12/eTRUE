@@ -2,7 +2,8 @@ torch==2.7.1
 torchvision==0.22.1
 numpy==2.0.2
 Pillow==11.2.1
-transformers==4.57.6
+# Qwen3.5 support in Transformers 5.x requires Python 3.10 or newer.
+transformers==5.17.0
 accelerate==1.8.1
 sentencepiece==0.2.0
 protobuf==6.31.1

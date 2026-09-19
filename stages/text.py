@@ -104,17 +104,17 @@ def generate_text_result(
 
 def run(records, output, model_cache, offline=False):
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer, Qwen3_5ForCausalLM
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.float16 if device == "cuda" else torch.float32
     tokenizer = AutoTokenizer.from_pretrained(
         MODELS["text"], cache_dir=str(model_cache), local_files_only=offline
     )
-    model = AutoModelForCausalLM.from_pretrained(
+    model = Qwen3_5ForCausalLM.from_pretrained(
         MODELS["text"],
         cache_dir=str(model_cache),
-        torch_dtype=dtype,
+        dtype=dtype,
         local_files_only=offline,
     ).to(device)
     model.eval()

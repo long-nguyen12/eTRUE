@@ -2,8 +2,8 @@
 
 MODELS = {
     "clip": "openai/clip-vit-base-patch32",
-    "vision": "Qwen/Qwen3-VL-4B-Instruct",
-    "text": "Qwen/Qwen3-4B",
+    "vision": "Qwen/Qwen3.5-4B",
+    "text": "Qwen/Qwen3.5-4B",
     "location": "dslim/bert-base-NER",
 }
 

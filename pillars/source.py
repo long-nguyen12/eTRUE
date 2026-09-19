@@ -4,7 +4,6 @@ from urllib.parse import unquote, urlparse
 
 from utils.evidence import add_field_evidence
 
-
 OFFICIAL_SOURCES = {
     "cnbc": "CNBC",
     "foxnews": "Fox News",
@@ -59,7 +58,9 @@ def _normalize_source_text(value):
         path_parts = [part for part in parsed.path.split("/") if part]
         text = path_parts[0] if path_parts else parsed.netloc.split(".")[0]
     text = unicodedata.normalize("NFKD", text)
-    text = "".join(character for character in text if not unicodedata.combining(character))
+    text = "".join(
+        character for character in text if not unicodedata.combining(character)
+    )
     text = re.sub(r"\s*\(@?[\w.-]+\)\s*$", "", text)
     text = text.replace("&", " and ")
     text = re.sub(r"^@", "", text)
@@ -115,7 +116,8 @@ def source_name_is_grounded(value, grounding_text):
         return False
     evidence = _normalize_source_text(grounding_text)
     return any(
-        alias and re.search(r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])", evidence)
+        alias
+        and re.search(r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])", evidence)
         for alias in _source_aliases(value)
     )
 
@@ -125,10 +127,9 @@ def apply_source_rules(extra, grounding_text, protected_source, evidence_ids):
     original_source = source.get("original_source_name")
     uploader = source.get("uploader_name")
     field_evidence = extra.get("field_evidence", {})
-    source_evidence = (
-        field_evidence.get("verification.source.original_source_name", [])
-        + field_evidence.get("verification.source.uploader_name", [])
-    )
+    source_evidence = field_evidence.get(
+        "verification.source.original_source_name", []
+    ) + field_evidence.get("verification.source.uploader_name", [])
     supporting_evidence = source_evidence or evidence_ids
 
     source_type = source.get("source_type")
@@ -158,7 +159,9 @@ def apply_source_rules(extra, grounding_text, protected_source, evidence_ids):
             source["source_type"] = "news outlet"
         else:
             source["source_type"] = "unknown"
-        add_field_evidence(extra, "verification.source.source_type", supporting_evidence)
+        add_field_evidence(
+            extra, "verification.source.source_type", supporting_evidence
+        )
 
     if not original_source:
         source["source_type"] = None
@@ -166,9 +169,13 @@ def apply_source_rules(extra, grounding_text, protected_source, evidence_ids):
     if not original_source:
         source["source_mismatch"] = None
 
-    if not _source_name_is_known(original_source) or not _source_name_is_known(uploader):
+    if not _source_name_is_known(original_source) or not _source_name_is_known(
+        uploader
+    ):
         source["source_is_uploader"] = None
         return
 
     source["source_is_uploader"] = source_entities_match(original_source, uploader)
-    add_field_evidence(extra, "verification.source.source_is_uploader", supporting_evidence)
+    add_field_evidence(
+        extra, "verification.source.source_is_uploader", supporting_evidence
+    )
