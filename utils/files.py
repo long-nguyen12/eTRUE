@@ -9,11 +9,24 @@ def read_json(path):
         return json.load(handle)
 
 
+def _json_safe(value):
+    if isinstance(value, str):
+        return "".join(
+            "\ufffd" if 0xD800 <= ord(character) <= 0xDFFF else character
+            for character in value
+        )
+    if isinstance(value, dict):
+        return {_json_safe(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-        json.dump(value, handle, ensure_ascii=False, indent=2)
+        json.dump(_json_safe(value), handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     temporary.replace(path)
 

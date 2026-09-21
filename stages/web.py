@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from utils.evidence import add_evidence
@@ -82,18 +83,20 @@ def run(records, output):
             "errors": [],
         }
         if url:
-            metadata = optional_result(
-                result["errors"],
-                "platform_metadata",
-                lambda: platform_metadata(url),
-            )
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_meta = ex.submit(
+                    optional_result, result["errors"], "platform_metadata",
+                    lambda: platform_metadata(url),
+                )
+                f_archive = ex.submit(
+                    optional_result, result["errors"], "wayback",
+                    lambda: wayback_earliest(url, session),
+                )
+            # executor.shutdown(wait=True) has already joined both futures
+            metadata = f_meta.result()
+            archive = f_archive.result()
             if metadata is not None:
                 result["platform_metadata"] = metadata
-            archive = optional_result(
-                result["errors"],
-                "wayback",
-                lambda: wayback_earliest(url, session),
-            )
             if archive is not None:
                 result["wayback"] = archive
 

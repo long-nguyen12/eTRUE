@@ -2,6 +2,7 @@
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from pillars.provenance import apply_search_provenance
 from stages.search_clients import (
@@ -79,30 +80,36 @@ def build_query_specs(record, extra):
 
 def enrich_candidates(session, candidates, errors):
     """Add page metadata and archive dates without failing the search stage."""
-    for item in candidates:
+    import requests
+
+    user_agent = session.headers.get("User-Agent", "eTRUE-research-dataset/1.0")
+
+    def enrich_one(item):
+        thread_session = requests.Session()
+        thread_session.headers["User-Agent"] = user_agent
         metadata = optional_result(
             errors,
             item["url"] + " metadata",
-            lambda item=item: candidate_page_metadata(session, item["url"]),
+            lambda: candidate_page_metadata(thread_session, item["url"]),
         )
         if metadata:
             item.update(metadata)
-
         archive_target = (
             item.get("canonical_url") or item.get("final_url") or item["url"]
         )
         if not public_http_url(archive_target):
-            continue
+            return
         archive = optional_result(
             errors,
             item["url"] + " Wayback",
-            lambda archive_target=archive_target: wayback_earliest(
-                archive_target, session
-            ),
+            lambda t=archive_target: wayback_earliest(t, thread_session),
         )
         if archive:
             item["archive_first_seen"] = archive["date"]
             item["archive_url"] = archive["snapshot_url"]
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        list(ex.map(enrich_one, candidates))
 
 
 def enrich_image_pages(session, image_search):
@@ -133,15 +140,28 @@ def search_record(record, extra, source, session, brave_key, vision_key):
     }
     result["search_provider"] = "Brave Search" if brave_key else "DDGS"
     seen = set()
-    for query_spec in build_query_specs(record, extra):
+    query_specs = build_query_specs(record, extra)
+
+    def fetch_query(query_spec):
+        import requests as _requests
         query = query_spec["query"]
+        thread_session = _requests.Session()
+        thread_session.headers["User-Agent"] = "eTRUE-research-dataset/1.0"
+        errors = []
         items = optional_result(
-            result["errors"],
+            errors,
             result["search_provider"] + " " + query,
-            lambda query=query: brave_results(session, brave_key, query)
+            lambda: brave_results(thread_session, brave_key, query)
             if brave_key
             else ddgs_results(query),
         )
+        return query_spec, items, errors
+
+    with ThreadPoolExecutor(max_workers=len(query_specs) or 1) as ex:
+        fetched = list(ex.map(fetch_query, query_specs))
+
+    for query_spec, items, errors in fetched:
+        result["errors"].extend(errors)
         for item in items or []:
             if item["url"] not in seen:
                 seen.add(item["url"])
