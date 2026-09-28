@@ -134,36 +134,42 @@ def evenly_spaced(items, maximum):
 
 
 def run(records, source, output, model_cache, offline=False):
-    import torch
-    from PIL import Image
-    from transformers import AutoModelForMultimodalLM, AutoProcessor
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print("Loading models on", device)
-    dtype = torch.float16 if device == "cuda" else torch.float32
-    processor = AutoProcessor.from_pretrained(
-        MODELS["vision"],
-        cache_dir=str(model_cache),
-        local_files_only=offline,
-    )
-    model_options = {
-        "cache_dir": str(model_cache),
-        "local_files_only": offline,
-        "dtype": dtype,
+    frames_by_id = {
+        record["claim_id"]: evenly_spaced(frame_paths(source, record), 4)
+        for record in records
     }
-    if device == "cuda":
-        model_options["device_map"] = "auto"
-    model = AutoModelForMultimodalLM.from_pretrained(
-        MODELS["vision"],
-        **model_options,
-    )
-    if device == "cpu":
-        model.to(device)
-    model.eval()
-    print("Loaded models")
+    model = processor = None
+    if any(frames_by_id.values()):
+        import torch
+        from PIL import Image
+        from transformers import AutoModelForMultimodalLM, AutoProcessor
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print("Loading models on", device)
+        dtype = torch.float16 if device == "cuda" else torch.float32
+        processor = AutoProcessor.from_pretrained(
+            MODELS["vision"],
+            cache_dir=str(model_cache),
+            local_files_only=offline,
+        )
+        model_options = {
+            "cache_dir": str(model_cache),
+            "local_files_only": offline,
+            "dtype": dtype,
+        }
+        if device == "cuda":
+            model_options["device_map"] = "auto"
+        model = AutoModelForMultimodalLM.from_pretrained(
+            MODELS["vision"],
+            **model_options,
+        )
+        if device == "cpu":
+            model.to(device)
+        model.eval()
+        print("Loaded models")
 
     for number, record in enumerate(records, 1):
-        frames = evenly_spaced(frame_paths(source, record), 4)
+        frames = frames_by_id[record["claim_id"]]
         expected_frames = [frame.relative_to(source).as_posix() for frame in frames]
         if not frames:
             analysis = {
@@ -249,4 +255,5 @@ def run(records, source, output, model_cache, offline=False):
         write_json(sidecar_file, extra)
         if number % 10 == 0:
             print("vision", number, "/", len(records), flush=True)
-    release_models(model, processor)
+    if model is not None:
+        release_models(model, processor)

@@ -49,7 +49,10 @@ def bounded_web_retrieval(value):
 def text_input(record, extra):
     data = record["data"]
     video = data.get("video_information") or {}
-    transcript = video.get("video_transcript")
+    normalized_video = extra.get("normalized_video_information") or {}
+    transcript = normalized_video.get("video_transcript")
+    if not str(transcript or "").strip():
+        transcript = video.get("video_transcript")
     verification = extra.get("verification") or {}
     candidate_facts = {}
     for pillar, values in verification.items():

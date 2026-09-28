@@ -5,9 +5,11 @@ from utils.evidence import add_evidence
 from utils.errors import optional_result
 from utils.files import now, read_json, write_json
 from utils.records import normalize_date, sidecar_path
+from utils.utils import normalize_social_url
 
 
 def wayback_earliest(url, session):
+    url = normalize_social_url(url)["url"]
     endpoint = "https://web.archive.org/cdx/search/cdx"
     response = session.get(
         endpoint,
@@ -37,6 +39,7 @@ def wayback_earliest(url, session):
 def platform_metadata(url):
     import yt_dlp
 
+    url = normalize_social_url(url)["url"]
     options = {
         "quiet": True,
         "no_warnings": True,
@@ -72,9 +75,10 @@ def run(records, output):
     session = requests.Session()
     session.headers["User-Agent"] = "eTRUE-research-dataset/1.0"
     for number, record in enumerate(records, 1):
-        url = (record["data"].get("video_information") or {}).get("video_url")
-        if url and "https://www.youtube.com/embed/" in url:
-            url = url.replace("https://www.youtube.com/embed/", "https://www.youtube.com/watch?v=")
+        original_url = (record["data"].get("video_information") or {}).get(
+            "video_url"
+        )
+        url = normalize_social_url(original_url)["url"]
 
         result = {
             "status": "ok",

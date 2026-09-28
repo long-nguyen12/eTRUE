@@ -29,6 +29,10 @@ data/
 # Logs and runtime files
 *.log
 *.pid
+var/
+exports/
+staticfiles/
+.webvenv/
 
 # Editor and OS metadata
 .vscode/
@@ -41,3 +45,4 @@ Thumbs.db
 .codex/
 data/
 tests/
+website/

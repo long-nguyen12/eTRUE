@@ -61,6 +61,7 @@ TEXT_BOOLEAN_FIELDS = {"provenance_mismatch", "source_is_uploader", "source_mism
 PILLAR_EVIDENCE_TYPES = {
     "provenance": {
         "archive_record",
+        "asr_transcript",
         "dataset_transcript",
         "fact_check_article",
         "fact_check_evidence",
@@ -79,6 +80,7 @@ PILLAR_EVIDENCE_TYPES = {
     "date": {
         "archive_record",
         "claim_text",
+        "asr_transcript",
         "dataset_transcript",
         "dataset_video_metadata",
         "fact_check_article",
@@ -89,6 +91,7 @@ PILLAR_EVIDENCE_TYPES = {
     },
     "location": {
         "claim_text",
+        "asr_transcript",
         "dataset_transcript",
         "fact_check_article",
         "fact_check_evidence",
@@ -100,6 +103,7 @@ PILLAR_EVIDENCE_TYPES = {
     },
     "motivation": {
         "claim_text",
+        "asr_transcript",
         "dataset_transcript",
         "dataset_video_metadata",
         "fact_check_article",

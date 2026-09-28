@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlsplit
 from stages.search_clients import clean_html_text
 from utils.files import trim
 from utils.records import normalize_date
+from utils.utils import normalize_social_url
 
 
 def public_http_url(url):
@@ -38,6 +39,7 @@ def json_ld_nodes(value):
 
 def candidate_page_metadata(session, url):
     """Retrieve bounded public HTML and extract structured provenance metadata."""
+    url = normalize_social_url(url)["url"]
     if not public_http_url(url):
         raise ValueError("candidate URL is not a public HTTP(S) URL")
 

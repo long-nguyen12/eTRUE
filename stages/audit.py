@@ -18,7 +18,7 @@ def is_filled(value):
     return value is not None and value != [] and value != ""
 
 
-def run(records, output):
+def run(records, output, report_path=None):
     coverage = Counter()
     unsupported = []
     dangling_links = []
@@ -75,6 +75,6 @@ def run(records, output):
         "models": MODELS,
         "generated_at": now(),
     }
-    write_json(output / "enrichment_report.json", report)
+    write_json(report_path or output / "enrichment_report.json", report)
     print(json.dumps(report, indent=2), flush=True)
     return report
