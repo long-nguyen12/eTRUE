@@ -1,4 +1,3 @@
-"""Extract and verify locations mentioned by independent evidence sources."""
 
 from urllib.parse import urlsplit
 
@@ -15,7 +14,6 @@ from utils.records import sidecar_path
 
 
 def build_sources(record, extra):
-    """Return category, text, URL, and any already-grounded visual places."""
     data = record["data"]
     motivation = extra["verification"]["motivation"]
     video = extra["normalized_video_information"]
@@ -129,7 +127,6 @@ def choose_claimed_location(candidates):
 
 
 def choose_verified_location(candidates):
-    """Require a unique place supported by at least two non-claim categories."""
     eligible = []
     for candidate in candidates:
         groups = candidate.get("event_support_groups")
@@ -146,7 +143,6 @@ def choose_verified_location(candidates):
 
 
 def _stronger_existing_value(extra, field, value, stage_evidence_ids):
-    """Return whether a current value has evidence not produced by this NER stage."""
     if not value or not location_candidate_is_plausible(value):
         return False
     path = "verification.location." + field

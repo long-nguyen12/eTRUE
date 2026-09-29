@@ -1,4 +1,3 @@
-"""Export compact reader-facing results from enrichment sidecars."""
 
 from utils.files import read_json
 from utils.records import sidecar_path

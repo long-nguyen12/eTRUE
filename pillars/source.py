@@ -80,14 +80,12 @@ _SOURCE_ALIAS_LOOKUP = {
 
 
 def normalize_source_name(value):
-    """Return a conservative canonical form for a source name, handle, or profile URL."""
     normalized = _normalize_source_text(value)
     normalized = re.sub(r"^the\s+", "", normalized)
     return _SOURCE_ALIAS_LOOKUP.get(normalized, normalized)
 
 
 def source_entities_match(left, right):
-    """Compare uploader/source entities after handle and known-alias normalization."""
     left_name = normalize_source_name(left)
     right_name = normalize_source_name(right)
     if not left_name or not right_name:

@@ -1,4 +1,3 @@
-"""Validate model-generated pillar values against collected evidence."""
 
 import json
 
@@ -37,7 +36,6 @@ def field_has_evidence_type(extra, field, evidence_types):
 
 
 def field_evidence_ids(extra, key, pillar, value):
-    """Return only evidence relevant to the field being assigned."""
     field = "verification." + pillar + "." + TEXT_FIELD_MAP[key][1]
     existing = list((extra.get("field_evidence") or {}).get(field) or [])
     allowed = PILLAR_EVIDENCE_TYPES[pillar]
@@ -47,8 +45,6 @@ def field_evidence_ids(extra, key, pillar, value):
         if evidence.get("id") and evidence.get("type") in allowed
     ]
 
-    # Categorical/Boolean fields are conclusions over the pillar evidence, while
-    # free-text fields should point to evidence that actually contains the value.
     if key in TEXT_ENUM_FIELDS or key in TEXT_BOOLEAN_FIELDS or pillar == "date":
         selected = [evidence["id"] for evidence in candidates]
     else:
@@ -77,7 +73,6 @@ def copy_grounded_text_fields(
     protected_source,
     protected_context,
 ):
-    """Copy model fields that pass their basic type and evidence checks."""
     verification = extra["verification"]
 
     for key, (pillar, field) in TEXT_FIELD_MAP.items():
@@ -133,7 +128,6 @@ def copy_grounded_text_fields(
 
 
 def apply_text_analysis(extra, analysis, grounding_text="", event_grounding_text=""):
-    """Copy model output, then validate each verification pillar in turn."""
     verification = extra["verification"]
     protected_status = (
         verification["provenance"].get("provenance_status")
@@ -178,7 +172,6 @@ def apply_text_analysis(extra, analysis, grounding_text="", event_grounding_text
 
 
 def reset_text_analysis(extra):
-    """Remove prior text-derived values while preserving stronger evidence."""
     verification = extra["verification"]
     links = extra.setdefault("field_evidence", {})
     for pillar, field in TEXT_RESET_FIELDS:

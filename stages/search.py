@@ -1,4 +1,3 @@
-"""Find possible earlier versions of a video on the web."""
 
 import os
 import re
@@ -29,7 +28,6 @@ def quoted_phrase(value):
 
 
 def build_query_specs(record, extra):
-    """Use transcript, caption, claim, and credited accounts."""
     data = record["data"]
     video = data.get("video_information") or {}
     verification = extra["verification"]
@@ -79,7 +77,6 @@ def build_query_specs(record, extra):
 
 
 def enrich_candidates(session, candidates, errors):
-    """Add page metadata and archive dates without failing the search stage."""
     import requests
 
     user_agent = session.headers.get("User-Agent", "eTRUE-research-dataset/1.0")
@@ -122,7 +119,6 @@ def enrich_image_pages(session, image_search):
 
 
 def enrich_text_results(session, result, maximum=5):
-    """Attach page and archive metadata to a bounded set of search hits."""
     enrich_candidates(
         session,
         (result.get("results") or [])[:maximum],
@@ -194,7 +190,6 @@ def search_record(record, extra, source, session, brave_key, vision_key):
 
 
 def add_search_evidence(extra, result):
-    """Search hits are review candidates, never verified field evidence."""
     remove_evidence_type(extra, "provenance_search_candidate")
     remove_evidence_type(extra, "provenance_image_candidate")
     evidence_by_url = {}

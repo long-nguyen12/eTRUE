@@ -1,4 +1,3 @@
-"""Audit field coverage and evidence links after enrichment."""
 
 import json
 from collections import Counter

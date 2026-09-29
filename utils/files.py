@@ -1,4 +1,3 @@
-"""Small file and value helpers used by enrichment stages."""
 
 import json
 from datetime import datetime, timezone

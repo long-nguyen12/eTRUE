@@ -1,4 +1,3 @@
-"""Build bounded evidence payloads for text extraction."""
 
 import json
 
@@ -163,7 +162,6 @@ def text_input(record, extra):
 
 
 def build_text_grounding(record, extra):
-    """Return the full prompt evidence and the stricter event-only evidence."""
     supplied_evidence = text_input(record, extra)
     grounding_text = json.dumps(supplied_evidence, ensure_ascii=False)
     current_video = supplied_evidence.get("current_video") or {}

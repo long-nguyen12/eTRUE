@@ -23,7 +23,6 @@ def import_existing_evidence(extra, data):
 
 
 def run(records, source, output, force=False):
-    """Copy claims, metadata, articles, evidence, and known publishers."""
     for number, record in enumerate(records, 1):
         path = sidecar_path(output, record["claim_id"])
         extra = read_json(path)

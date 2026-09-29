@@ -96,7 +96,6 @@ def run(records, output):
                     optional_result, result["errors"], "wayback",
                     lambda: wayback_earliest(url, session),
                 )
-            # executor.shutdown(wait=True) has already joined both futures
             metadata = f_meta.result()
             archive = f_archive.result()
             if metadata is not None:

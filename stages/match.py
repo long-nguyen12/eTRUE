@@ -1,4 +1,3 @@
-"""Confirm local near-duplicate videos with CLIP and perceptual hashes."""
 
 from stages import MODELS
 from stages.clip import embed_keyframes
@@ -24,7 +23,6 @@ def hash_distance(first, second):
 
 
 def run(records, source, output, model_cache, threshold=0.95, offline=False):
-    """Keep CLIP candidates only when perceptual hashes also agree."""
     import numpy as np
 
     clip_results = embed_keyframes(records, source, model_cache, offline)

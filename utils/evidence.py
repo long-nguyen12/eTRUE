@@ -1,4 +1,3 @@
-"""Evidence creation and linking."""
 
 import hashlib
 import json

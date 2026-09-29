@@ -1,4 +1,3 @@
-"""Field definitions used by text extraction and validation."""
 
 from pillars.date import DATE_GRANULARITIES, DATE_MISMATCHES
 from pillars.location import LOCATION_MISMATCHES

@@ -1,4 +1,3 @@
-"""Geocode verified locations and compare them with claimed locations."""
 
 import re
 import time
@@ -22,16 +21,7 @@ def address_value(row, keys):
 
 
 ADMIN_ADDRESS_KEYS = (
-    "amenity",
-    "building",
-    "road",
-    "neighbourhood",
-    "suburb",
-    "city_district",
     "city",
-    "town",
-    "village",
-    "municipality",
     "county",
     "state_district",
     "state",
@@ -40,6 +30,28 @@ ADMIN_ADDRESS_KEYS = (
     "country",
     "country_code",
 )
+
+
+TARGET_PLACE_TYPES = {
+    "city",
+    "country",
+    "county",
+    "district",
+    "province",
+    "region",
+    "state",
+    "state district",
+}
+
+
+def is_target_place(row):
+    if not isinstance(row, dict):
+        return False
+    place_types = {
+        normalized(row.get("addresstype")),
+        normalized(row.get("type")),
+    }
+    return bool(place_types & TARGET_PLACE_TYPES)
 
 
 def _row_names(row):
@@ -51,7 +63,6 @@ def _row_names(row):
 
 
 def _candidate_score(query, row, context):
-    """Rank a Nominatim row using exact query and administrative-context matches."""
     query_name = normalized(query)
     names = _row_names(row)
     display_name = normalized(row.get("display_name"))
@@ -73,43 +84,39 @@ def _candidate_score(query, row, context):
     score += 3.0 * sum(value in names for value in context_names)
 
     place_type = normalized(row.get("addresstype") or row.get("type"))
-    if place_type in {
-        "country",
-        "state",
-        "province",
-        "region",
-        "county",
-        "city",
-        "town",
-        "village",
-        "municipality",
-        "suburb",
-        "neighbourhood",
-    }:
+    if place_type in TARGET_PLACE_TYPES:
         score += 0.5
     return score
 
 
 def select_geocode_candidate(query, rows, context=()):
-    """Select the best result without assuming Nominatim's first row is correct."""
-    candidates = [row for row in rows or [] if isinstance(row, dict)]
+    returned = [row for row in rows or [] if isinstance(row, dict)]
+    candidates = [
+        (index, row) for index, row in enumerate(returned) if is_target_place(row)
+    ]
     if not candidates:
-        return None, {"strategy": "no_candidates", "candidate_count": 0}
+        return None, {
+            "strategy": (
+                "no_target_place_candidates" if returned else "no_candidates"
+            ),
+            "candidate_count": len(returned),
+            "target_candidate_count": 0,
+        }
     scored = [
         (_candidate_score(query, row, context), -index, index, row)
-        for index, row in enumerate(candidates)
+        for index, row in candidates
     ]
     score, _, index, selected = max(scored, key=lambda item: (item[0], item[1]))
     return selected, {
         "strategy": "query_and_admin_context",
-        "candidate_count": len(candidates),
+        "candidate_count": len(returned),
+        "target_candidate_count": len(candidates),
         "selected_index": index,
         "score": round(score, 4),
     }
 
 
 def classify_location_mismatch(claimed, verified, claimed_row=None, verified_row=None):
-    """Compare names, OSM identity, country, region, then city."""
     if not claimed or not verified:
         return None
     same_osm_place = (
@@ -126,7 +133,7 @@ def classify_location_mismatch(claimed, verified, claimed_row=None, verified_row
     levels = (
         ("different country", ("country_code", "country")),
         ("different region", ("state", "region", "province", "state_district")),
-        ("different city", ("city", "town", "village", "municipality", "hamlet")),
+        ("different city", ("city",)),
     )
     for mismatch, keys in levels:
         claimed_value = address_value(claimed_row, keys)
@@ -227,13 +234,40 @@ def run(records, output):
 
         verified_row = results["verified"].get("result")
         if not verified_row:
+            selection = results["verified"].get("selection") or {}
+            rejected = selection.get("strategy") == "no_target_place_candidates"
+            if rejected:
+                location["verified_location"] = None
+                location["verified_coordinates"] = None
+                location["location_mismatch_type"] = None
+                remove_evidence_type(extra, "geocoder_result")
+                links = extra.get("field_evidence") or {}
+                for field in (
+                    "verified_location",
+                    "verified_coordinates",
+                    "location_mismatch_type",
+                ):
+                    links.pop("verification.location." + field, None)
             extra.setdefault("automation", {})["geocode"] = {
-                "status": "error",
-                "reason": "no geocoder result for verified location",
+                "status": "rejected" if rejected else "error",
+                "reason": (
+                    "verified location is not a city, region, state, or country"
+                    if rejected
+                    else "no geocoder result for verified location"
+                ),
                 **results,
             }
             write_json(sidecar_file, extra)
             continue
+
+        claimed_result = results.get("claimed") or {}
+        claimed_selection = claimed_result.get("selection") or {}
+        if claimed_selection.get("strategy") == "no_target_place_candidates":
+            location["claimed_location"] = None
+            (extra.get("field_evidence") or {}).pop(
+                "verification.location.claimed_location", None
+            )
+            claimed = None
 
         remove_evidence_type(extra, "geocoder_result")
 

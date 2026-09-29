@@ -1,4 +1,3 @@
-"""Simple text comparison helpers."""
 
 import re
 

@@ -1,4 +1,3 @@
-"""Create normalized CLIP embeddings for extracted keyframes."""
 
 from stages import MODELS
 from utils.model_output import release_models
@@ -6,7 +5,6 @@ from utils.records import frame_paths
 
 
 def embed_keyframes(records, source, model_cache, offline=False):
-    """Return normalized CLIP keyframe embeddings in memory."""
     import torch
     from PIL import Image
     from transformers import AutoProcessor, CLIPModel

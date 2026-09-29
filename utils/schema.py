@@ -1,4 +1,3 @@
-"""Canonical public verification schema."""
 
 from copy import deepcopy
 
@@ -51,7 +50,6 @@ def empty_verification():
 
 
 def project_verification(verification):
-    """Return only fields intended for the public result file."""
     verification = verification or {}
     projected = {}
     for pillar, defaults in VERIFICATION_DEFAULTS.items():

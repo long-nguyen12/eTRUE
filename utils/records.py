@@ -1,4 +1,3 @@
-"""Load source records and locate their generated artifacts."""
 
 from datetime import datetime
 from pathlib import Path
@@ -37,7 +36,6 @@ def normalize_date(value):
 
 
 def canonical_video_key(url, claim_id):
-    """Return a stable key for exact URL-equivalent videos."""
     if not url:
         return "claim:" + claim_id
 

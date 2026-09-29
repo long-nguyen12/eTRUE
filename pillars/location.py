@@ -13,6 +13,31 @@ LOCATION_MISMATCHES = {
 }
 
 
+NON_ADMIN_LOCATION_TERMS = {
+    "airport",
+    "avenue",
+    "bridge",
+    "building",
+    "church",
+    "highway",
+    "hospital",
+    "house",
+    "lake",
+    "landmark",
+    "museum",
+    "park",
+    "river",
+    "road",
+    "school",
+    "square",
+    "stadium",
+    "station",
+    "street",
+    "tower",
+    "university",
+}
+
+
 def location_candidate_is_plausible(value):
     text = str(value or "").strip()
     words = re.findall(r"[^\W\d_]+", text, flags=re.UNICODE)
@@ -31,16 +56,21 @@ def location_candidate_is_plausible(value):
         "state",
         "province",
         "country",
+        "region",
         "district",
-        "park",
-        "island",
-        "airport",
-        "station",
-        "school",
-        "house",
     )
-    if any(re.search(r"\b" + indicator + r"\b", lowered) for indicator in indicators):
+    components = [component.strip() for component in lowered.split(",")]
+    if any(
+        re.search(r"\b" + indicator + r"\s*$", component)
+        for indicator in indicators
+        for component in components
+    ):
         return True
+    if any(
+        re.search(r"\b" + term + r"\b", lowered)
+        for term in NON_ADMIN_LOCATION_TERMS
+    ):
+        return False
     significant = [word for word in words if word.lower() not in {"of", "the", "and"}]
     if len(significant) == 1 and len(significant[0]) < 3:
         return False

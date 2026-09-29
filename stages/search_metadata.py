@@ -1,4 +1,3 @@
-"""Extract provenance metadata from public candidate pages."""
 
 import ipaddress
 import json
@@ -38,7 +37,6 @@ def json_ld_nodes(value):
 
 
 def candidate_page_metadata(session, url):
-    """Retrieve bounded public HTML and extract structured provenance metadata."""
     url = normalize_social_url(url)["url"]
     if not public_http_url(url):
         raise ValueError("candidate URL is not a public HTTP(S) URL")

@@ -1,15 +1,13 @@
-"""Generate a textual transcript from a record's remote video audio."""
 
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
-
+import torch
 from stages import MODELS
 from utils.evidence import add_evidence
 from utils.files import now, read_json, trim, write_json
 from utils.records import sidecar_path
 from utils.utils import normalize_social_url
-
 
 MAX_AUDIO_BYTES = 512 * 1024 * 1024
 MAX_TRANSCRIPT_CHARACTERS = 200000
@@ -28,7 +26,6 @@ def _set_record_transcript(record, transcript):
 
 
 def _download_audio(url, directory):
-    """Download the best available audio stream into a temporary directory."""
     import yt_dlp
 
     directory = Path(directory)
@@ -78,13 +75,10 @@ def _download_audio(url, directory):
 
 
 def _transcribe_audio(audio_path, model_cache):
-    """Run multilingual Faster Whisper and return text plus generation metadata."""
     from faster_whisper import WhisperModel
 
-    model_name = (
-        os.environ.get("ETRUE_WHISPER_MODEL", "").strip() or MODELS["transcript"]
-    )
-    device = os.environ.get("ETRUE_WHISPER_DEVICE", "cpu").strip().lower()
+    model_name = MODELS["transcript"]
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu").type
     if device not in {"cpu", "cuda"}:
         raise RuntimeError("ETRUE_WHISPER_DEVICE must be either cpu or cuda.")
     compute_type = "float16" if device == "cuda" else "int8"

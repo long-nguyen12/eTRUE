@@ -1,5 +1,3 @@
-"""Search provider and reverse-image-search clients."""
-
 import base64
 import re
 from html import unescape
@@ -95,7 +93,6 @@ def image_match_list(matches):
 
 
 def google_image_matches(session, api_key, frames, source=None):
-    """Return and merge Web Detection results for up to three keyframes."""
     if hasattr(frames, "read_bytes"):
         frames = [frames]
     else:

@@ -1,4 +1,3 @@
-"""Create the small JSON file intended for dataset readers."""
 
 from utils.files import write_json
 from utils.schema import project_verification

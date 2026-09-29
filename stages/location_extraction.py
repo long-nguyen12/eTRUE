@@ -1,4 +1,3 @@
-"""Extract location candidates from text and classify event-place assertions."""
 
 import re
 
@@ -20,7 +19,6 @@ def clean_location(value):
 
 
 def mention_excerpt(text, start, end, radius=180):
-    """Return a compact sentence-like window around a recognized mention."""
     left = max(0, start - radius)
     right = min(len(text), end + radius)
     for separator in ".!?\n":
@@ -35,7 +33,6 @@ def mention_excerpt(text, start, end, radius=180):
 
 
 def event_location_is_asserted(text, name, start=None, end=None):
-    """Conservatively distinguish an event location from a topical place mention."""
     if start is None or end is None:
         match = re.search(
             r"(?<!\w)" + re.escape(name) + r"(?!\w)",
@@ -97,7 +94,6 @@ def event_location_is_asserted(text, name, start=None, end=None):
 
 
 def _store_mention(candidate, mention):
-    """Keep the strongest excerpt for each genuinely independent support group."""
     group = mention["support_group"]
     existing = next(
         (
@@ -120,7 +116,6 @@ def _store_mention(candidate, mention):
 
 
 def extract_candidates(sources, recognizer):
-    """Keep one supporting excerpt per evidence category and place."""
     found = {}
     for source in sources:
         mentions = [(place, 1.0, source["text"], True) for place in source["known"]]

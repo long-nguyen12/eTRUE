@@ -1,4 +1,3 @@
-"""Parsing and cleanup helpers shared by local model stages."""
 
 import ast
 import gc
@@ -6,7 +5,6 @@ import json
 
 
 def escape_json_control_characters(text):
-    """Escape line breaks and tabs that a model placed inside JSON strings."""
     cleaned = []
     inside_string = False
     escaped = False

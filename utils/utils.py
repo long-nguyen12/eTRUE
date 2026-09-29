@@ -5,22 +5,14 @@ import requests
 
 
 def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
-    """Return URL normalization details for supported social platforms."""
     original_url = url
 
-    # ---------------------------------------------------------
-    # 1. Basic cleaning
-    # ---------------------------------------------------------
     url = str(url or "").strip()
     url = url.strip("'\"")
     url = url.replace(r"\&", "&")
     url = url.replace("&amp;", "&")
     parsed = urlparse(url)
 
-    # # Add https if missing
-    # if not parsed.scheme:
-    #     url = "https://" + url
-    #     parsed = urlparse(url)
 
     host = parsed.netloc.lower()
     host_no_www = host.removeprefix("www.")
@@ -33,9 +25,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
         "changed": url != original_url,
     }
 
-    # ---------------------------------------------------------
-    # 2. FACEBOOK
-    # ---------------------------------------------------------
     if host_no_www in {
         "facebook.com",
         "m.facebook.com",
@@ -44,9 +33,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
     }:
         result["platform"] = "facebook"
 
-        # Facebook plugin/embed URL
-        #
-        # facebook.com/plugins/video.php?href=ENCODED_URL
         if "/plugins/video.php" in parsed.path:
             params = parse_qs(parsed.query)
 
@@ -65,7 +51,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
                 return nested
 
-        # facebook.com/watch/?v=VIDEO_ID
         params = parse_qs(parsed.query)
 
         if parsed.path.rstrip("/") == "/watch" and params.get("v"):
@@ -77,11 +62,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
             return result
 
-        # Legacy video URLs:
-        #
-        # /page/videos/12345/
-        # /page/videos/vb.PAGE_ID/12345/
-        # /PAGE_ID/videos/vb.PAGE_ID/12345/
         if "/videos/" in parsed.path:
             numbers = re.findall(r"/(\d+)(?:/|$)", parsed.path)
 
@@ -94,7 +74,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
                 return result
 
-        # Reel
         match = re.search(r"/reel/(\d+)", parsed.path)
 
         if match:
@@ -106,7 +85,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
             return result
 
-        # Redirect URLs
         is_redirect = (
             host_no_www == "fb.watch"
             or "/share/v/" in parsed.path
@@ -131,7 +109,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
             result["status"] = "needs_redirect"
             return result
 
-        # Facebook posts cannot always be converted to video URLs
         clean = f"https://www.facebook.com{parsed.path}"
 
         result["url"] = clean
@@ -142,9 +119,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
         return result
 
-    # ---------------------------------------------------------
-    # 3. X / TWITTER
-    # ---------------------------------------------------------
     if host_no_www in {
         "twitter.com",
         "x.com",
@@ -153,12 +127,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
     }:
         result["platform"] = "x"
 
-        # Extract only status ID.
-        #
-        # Works for:
-        # twitter.com/user/status/123
-        # twitter.com/realuser/status/123
-        # x.com/user/status/123
         match = re.search(r"/status(?:es)?/(\d+)", parsed.path)
 
         if match:
@@ -172,7 +140,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
         return result
 
-    # t.co short links
     if host_no_www == "t.co":
         result["platform"] = "x"
 
@@ -193,9 +160,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
         result["status"] = "needs_redirect"
         return result
 
-    # ---------------------------------------------------------
-    # 4. YOUTUBE
-    # ---------------------------------------------------------
     if host_no_www in {
         "youtube.com",
         "m.youtube.com",
@@ -203,7 +167,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
     }:
         result["platform"] = "youtube"
 
-        # youtu.be/VIDEO_ID
         if host_no_www == "youtu.be":
             video_id = parsed.path.strip("/").split("/")[0]
 
@@ -214,12 +177,10 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
             return result
 
-        # Search page != single video
         if parsed.path == "/results":
             result["status"] = "search_page"
             return result
 
-        # /embed/VIDEO_ID
         match = re.match(r"/embed/([^/?]+)", parsed.path)
 
         if match:
@@ -231,7 +192,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
             return result
 
-        # /shorts/VIDEO_ID
         match = re.match(r"/shorts/([^/?]+)", parsed.path)
 
         if match:
@@ -243,7 +203,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
             return result
 
-        # watch?v=...
         if parsed.path == "/watch":
             params = parse_qs(parsed.query)
 
@@ -258,20 +217,13 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
         return result
 
-    # ---------------------------------------------------------
-    # 5. TIKTOK
-    # ---------------------------------------------------------
     if host_no_www.endswith("tiktok.com") or "tiktokcdn.com" in host_no_www:
         result["platform"] = "tiktok"
 
-        # Temporary CDN URL
         if "tiktokcdn.com" in host_no_www:
             result["status"] = "ephemeral_media_url"
             return result
 
-        # Normal TikTok post
-        #
-        # /@username/video/123456789
         match = re.search(
             r"/@[^/]+/video/(\d+)",
             parsed.path,
@@ -280,7 +232,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
         if match:
             video_id = match.group(1)
 
-            # Keep username because it is useful if valid
             username_match = re.search(
                 r"/@([^/]+)/video/",
                 parsed.path,
@@ -298,10 +249,6 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
             return result
 
-        # TikTok embed URL.
-        #
-        # yt-dlp can usually recognize this form, so simply
-        # remove unnecessary query parameters.
         match = re.match(
             r"/embed/(\d+)",
             parsed.path,
@@ -318,18 +265,12 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
         return result
 
-    # ---------------------------------------------------------
-    # 6. INSTAGRAM
-    # ---------------------------------------------------------
     if host_no_www in {
         "instagram.com",
         "m.instagram.com",
     }:
         result["platform"] = "instagram"
 
-        # /p/SHORTCODE
-        # /reel/SHORTCODE
-        # /tv/SHORTCODE
         match = re.search(
             r"/(p|reel|tv)/([^/?#]+)",
             parsed.path,
@@ -347,13 +288,9 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
         return result
 
-    # ---------------------------------------------------------
-    # 7. REDDIT
-    # ---------------------------------------------------------
     if host_no_www.endswith("reddit.com") or host_no_www == "redd.it":
         result["platform"] = "reddit"
 
-        # Signed Reddit media URLs often expire
         if host_no_www in {
             "packaged-media.redd.it",
             "v.redd.it",
@@ -361,23 +298,18 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
             result["status"] = "ephemeral_media_url"
             return result
 
-        # Remove tracking query
         result["url"] = f"https://www.reddit.com{parsed.path}"
         result["status"] = "normalized"
         result["changed"] = result["url"] != original_url
 
         return result
 
-    # ---------------------------------------------------------
-    # Other websites
-    # ---------------------------------------------------------
     result["status"] = "unsupported"
 
     return result
 
 
 def _resolve_redirect(url: str) -> str | None:
-    """Resolve short/redirect URLs."""
 
     try:
         response = requests.get(

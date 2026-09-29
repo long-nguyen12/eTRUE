@@ -233,7 +233,6 @@ def date_is_grounded(value, grounding_text):
 
 
 def compare_date_values(left, right):
-    """Return -1, 0, or 1 when left is before, overlaps, or follows right."""
     left_date = _parse_date_value(left)
     right_date = _parse_date_value(right)
     if not left_date or not right_date:
