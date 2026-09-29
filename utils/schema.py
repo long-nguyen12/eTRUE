@@ -2,6 +2,9 @@
 from copy import deepcopy
 
 
+METADATA_STATUSES = {"complete", "partial", "missing"}
+
+
 VERIFICATION_DEFAULTS = {
     "provenance": {
         "provenance_status": None,
@@ -12,6 +15,7 @@ VERIFICATION_DEFAULTS = {
         "provenance_mismatch": None,
     },
     "source": {
+        "metadata_status": None,
         "uploader_name": None,
         "uploader_profile": None,
         "original_source_name": None,

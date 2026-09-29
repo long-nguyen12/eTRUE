@@ -19,14 +19,22 @@ def bounded_value(value, length=1000):
 def bounded_web_retrieval(value):
     if not isinstance(value, dict):
         return None
-    metadata = value.get("platform_metadata") or {}
+    metadata = value.get("metadata") or {}
+    if not metadata and value.get("platform_metadata"):
+        previous = value["platform_metadata"]
+        metadata = {
+            "uploader_name": previous.get("uploader") or previous.get("channel"),
+            "uploader_profile": previous.get("uploader_url") or previous.get("channel_url"),
+            "upload_date": previous.get("upload_date"),
+            "title": previous.get("title"),
+            "description": previous.get("description"),
+            "webpage_url": previous.get("webpage_url"),
+            "extractor": previous.get("extractor"),
+        }
     fields = (
-        "uploader",
-        "uploader_url",
-        "channel",
-        "channel_url",
+        "uploader_name",
+        "uploader_profile",
         "upload_date",
-        "timestamp",
         "title",
         "description",
         "webpage_url",
@@ -35,11 +43,14 @@ def bounded_web_retrieval(value):
     return {
         "url": value.get("url"),
         "retrieved_at": value.get("retrieved_at"),
-        "platform_metadata": {
+        "metadata_status": value.get("metadata_status"),
+        "metadata": {
             key: trim(metadata[key], 1000) if key == "description" else metadata[key]
             for key in fields
             if metadata.get(key) is not None
         },
+        "field_sources": value.get("field_sources") or {},
+        "missing_fields": value.get("missing_fields") or [],
         "wayback": value.get("wayback"),
         "errors": (value.get("errors") or [])[:5],
     }
@@ -53,6 +64,9 @@ def text_input(record, extra):
     if not str(transcript or "").strip():
         transcript = video.get("video_transcript")
     verification = extra.get("verification") or {}
+    source_verification = verification.get("source") or {}
+    date_verification = verification.get("date") or {}
+    motivation_verification = verification.get("motivation") or {}
     candidate_facts = {}
     for pillar, values in verification.items():
         for field, value in values.items():
@@ -135,9 +149,17 @@ def text_input(record, extra):
         "current_video": {
             "url": video.get("video_url"),
             "platform": video.get("platform"),
-            "upload_date": normalize_date(video.get("video_date")),
-            "title": video.get("video_headline"),
-            "description": trim(video.get("video_description"), 2000),
+            "upload_date": date_verification.get("video_upload_date")
+            or normalize_date(video.get("video_date")),
+            "title": motivation_verification.get("original_caption")
+            or video.get("video_headline"),
+            "description": trim(
+                motivation_verification.get("original_description")
+                or video.get("video_description"),
+                2000,
+            ),
+            "uploader_name": source_verification.get("uploader_name"),
+            "uploader_profile": source_verification.get("uploader_profile"),
         },
         "transcript": trim(transcript, 3500),
         "candidate_facts": candidate_facts,

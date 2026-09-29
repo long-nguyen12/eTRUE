@@ -90,6 +90,7 @@ def run(records, source, output, force=False):
             )
         if force or verification["motivation"]["original_caption"] is None:
             verification["motivation"]["original_caption"] = video.get("video_headline")
+        if force or verification["motivation"]["original_description"] is None:
             verification["motivation"]["original_description"] = video.get("video_description")
 
         platform = extra["normalized_video_information"].get("platform")

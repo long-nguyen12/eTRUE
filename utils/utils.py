@@ -1,9 +1,6 @@
 import re
 from urllib.parse import urlparse, parse_qs, unquote
 
-import requests
-
-
 def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
     original_url = url
 
@@ -310,6 +307,7 @@ def normalize_social_url(url: str, resolve_redirects: bool = True) -> dict:
 
 
 def _resolve_redirect(url: str) -> str | None:
+    import requests
 
     try:
         response = requests.get(

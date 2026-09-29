@@ -4,7 +4,17 @@ from collections import Counter
 
 from stages import MODELS
 from utils.files import now, read_json, write_json
+from utils.media_metadata import CORE_METADATA_FIELDS, metadata_status
 from utils.records import sidecar_path
+
+
+METADATA_FIELD_PATHS = {
+    "uploader_name": "verification.source.uploader_name",
+    "uploader_profile": "verification.source.uploader_profile",
+    "upload_date": "verification.date.video_upload_date",
+    "title": "verification.motivation.original_caption",
+    "description": "verification.motivation.original_description",
+}
 
 
 def verification_fields(extra):
@@ -23,6 +33,9 @@ def run(records, output, report_path=None):
     dangling_links = []
     stage_issues = []
     evidence_types = Counter()
+    metadata_statuses = Counter()
+    metadata_inconsistencies = []
+    stale_metadata_links = []
     for record in records:
         extra = read_json(sidecar_path(output, record["claim_id"]))
         links = extra.get("field_evidence", {})
@@ -60,6 +73,37 @@ def run(records, output, report_path=None):
                         "errors": errors[:3] if isinstance(errors, list) else [str(errors)],
                     }
                 )
+        source_status = (extra.get("verification", {}).get("source") or {}).get(
+            "metadata_status"
+        )
+        metadata_statuses[source_status or "unset"] += 1
+        web = (extra.get("automation") or {}).get("web") or {}
+        web_metadata = web.get("metadata") or {}
+        expected_status = metadata_status(web_metadata)
+        if (
+            source_status not in {"complete", "partial", "missing"}
+            or web.get("metadata_status") != source_status
+            or expected_status != source_status
+        ):
+            metadata_inconsistencies.append(
+                {
+                    "claim_id": record["claim_id"],
+                    "verification_status": source_status,
+                    "automation_status": web.get("metadata_status"),
+                    "calculated_status": expected_status,
+                }
+            )
+        platform_evidence = {
+            evidence.get("id")
+            for evidence in extra.get("evidence", [])
+            if evidence.get("type") == "platform_metadata"
+        }
+        for field in CORE_METADATA_FIELDS:
+            path = METADATA_FIELD_PATHS[field]
+            if not web_metadata.get(field) and platform_evidence.intersection(links.get(path) or []):
+                stale_metadata_links.append(
+                    {"claim_id": record["claim_id"], "field": path}
+                )
         evidence_types.update(evidence.get("type") for evidence in extra.get("evidence", []))
     report = {
         "samples": len(records),
@@ -70,6 +114,11 @@ def run(records, output, report_path=None):
         "dangling_examples": dangling_links[:50],
         "stage_issues": len(stage_issues),
         "stage_issue_examples": stage_issues[:50],
+        "metadata_status_counts": dict(sorted(metadata_statuses.items())),
+        "metadata_status_inconsistencies": len(metadata_inconsistencies),
+        "metadata_status_examples": metadata_inconsistencies[:50],
+        "stale_metadata_evidence_links": len(stale_metadata_links),
+        "stale_metadata_examples": stale_metadata_links[:50],
         "evidence_types": dict(sorted(evidence_types.items())),
         "models": MODELS,
         "generated_at": now(),
