@@ -1,3 +1,4 @@
+import json
 import re
 
 from utils.evidence import add_field_evidence
@@ -42,7 +43,7 @@ def location_candidate_is_plausible(value):
     text = str(value or "").strip()
     words = re.findall(r"[^\W\d_]+", text, flags=re.UNICODE)
     lowered = text.casefold()
-    if not text or len(text) > 80 or len(words) > 8:
+    if not text or len(text) > 120 or len(words) > 12:
         return False
     if any(
         phrase in lowered
@@ -101,6 +102,29 @@ def extract_location_contrast(grounding_text):
     )
     if claimed_first:
         return claimed_first.group(1).strip(), claimed_first.group(2).strip()
+
+    try:
+        evidence = json.loads(text)
+    except ValueError:
+        evidence = None
+    if isinstance(evidence, dict):
+        text = json.dumps({
+            key: evidence.get(key)
+            for key in ("fact_check_article", "fact_check_evidence")
+        }, ensure_ascii=False)
+    verified_patterns = (
+        r"(?i:\bactually\s+(?:filmed|taken|recorded|shot)\s+in\s+)",
+        r"(?i:\bvideo\s+(?:is|was)\s+from\s+)",
+        r"(?i:\bshows?\s+(?:scenes?\s+from|footage\s+(?:from|of))\s+)",
+        r"(?i:\boriginated?\s+(?:from|in)\s+)",
+        r"(?i:\bclip\s+(?:is|was)\s+(?:from|filmed\s+in)\s+)",
+    )
+    for pattern in verified_patterns:
+        for match in re.finditer(pattern + "(" + place + ")", text):
+            if re.search(r"\bnot\s*$", text[:match.start()], flags=re.I):
+                continue
+            if location_candidate_is_plausible(match.group(1)):
+                return None, match.group(1).strip()
     return None
 
 
@@ -108,10 +132,12 @@ def apply_location_rules(extra, event_grounding_text, evidence_ids):
     location = extra["verification"]["location"]
     contrast = extract_location_contrast(event_grounding_text)
     if contrast:
-        location["claimed_location"], location["verified_location"] = contrast
-        add_field_evidence(
-            extra, "verification.location.claimed_location", evidence_ids
-        )
+        claimed, location["verified_location"] = contrast
+        if claimed:
+            location["claimed_location"] = claimed
+            add_field_evidence(
+                extra, "verification.location.claimed_location", evidence_ids
+            )
         add_field_evidence(
             extra, "verification.location.verified_location", evidence_ids
         )

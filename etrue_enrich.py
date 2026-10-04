@@ -1,5 +1,8 @@
 """Run the eTRUE enrichment pipeline.
 
+Run ``python etrue_build.py`` first, then this script's ``bootstrap`` stage
+before the remaining enrichment stages.
+
 Each pipeline stage lives in its matching file under ``stages/``. Pillar rules
 live in ``pillars/`` and reusable helpers live in ``utils/``. Records remain
 ordinary Python dictionaries; there is no schema framework or hidden model.

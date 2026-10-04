@@ -1,4 +1,4 @@
-from pillars.source import OFFICIAL_SOURCES
+from pillars.source import get_platform_source
 from utils.evidence import add_evidence, add_field_evidence, remove_evidence_type
 from utils.files import read_json, trim, write_json
 from utils.records import normalize_date, sidecar_path
@@ -29,6 +29,7 @@ def run(records, source, output, force=False):
         data = record["data"]
         video = data.get("video_information") or {}
         verification = extra["verification"]
+        extra["rating"] = data.get("rating")
 
         claim_evidence = add_evidence(
             extra,
@@ -94,11 +95,11 @@ def run(records, source, output, force=False):
             verification["motivation"]["original_description"] = video.get("video_description")
 
         platform = extra["normalized_video_information"].get("platform")
-        official_source = OFFICIAL_SOURCES.get(platform)
+        official_source = get_platform_source(platform)
         if official_source:
-            verification["source"]["uploader_name"] = official_source
-            verification["source"]["original_source_name"] = official_source
-            verification["source"]["source_type"] = "news outlet"
+            verification["source"]["uploader_name"] = official_source["name"]
+            verification["source"]["original_source_name"] = official_source["name"]
+            verification["source"]["source_type"] = official_source["source_type"]
             verification["source"]["source_is_uploader"] = True
             for field in (
                 "verification.source.uploader_name",

@@ -1,4 +1,8 @@
-"""Build simple eTRUE extra annotations from the original TRUE dataset."""
+"""Build simple eTRUE extra annotations from the original TRUE dataset.
+
+Run this first, then ``python etrue_enrich.py bootstrap`` to import evidence
+before running the remaining enrichment stages.
+"""
 
 import argparse
 import hashlib
@@ -28,6 +32,7 @@ def make_sidecar(record, source):
 
     return {
         "claim_id": record["claim_id"],
+        "rating": data.get("rating"),
         "source_file": record["path"].relative_to(source).as_posix(),
         "legacy_split": record["legacy_split"],
         "normalized_video_information": {

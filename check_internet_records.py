@@ -8,11 +8,11 @@ from pathlib import Path
 from utils.files import now, write_json
 from utils.media_metadata import (
     CORE_METADATA_FIELDS,
-    cookie_file_from_env,
     extract_media,
 )
 from utils.records import canonical_video_key, load_records, normalize_platform
 from utils.utils import normalize_social_url
+from utils.ytdlp import cookie_file_from_env
 
 
 REASON_LABELS = {

@@ -9,7 +9,7 @@ def readable_result(extra):
     claim_components = extra.get("claim_components") or []
     claim = claim_components[0].get("text") if claim_components else None
 
-    return {
+    result = {
         "claim_id": extra["claim_id"],
         "claim": claim,
         "video_information": {
@@ -20,6 +20,9 @@ def readable_result(extra):
         },
         "verification": project_verification(extra["verification"]),
     }
+    if extra.get("rating") is not None:
+        result["rating"] = extra["rating"]
+    return result
 
 
 def write_readable_result(extra, output):

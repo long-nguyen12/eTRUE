@@ -1,7 +1,7 @@
 
 import json
 
-from stages.text_fields import TEXT_OUTPUT_FIELDS
+from stages.text_validation import TEXT_OUTPUT_FIELDS
 from utils.files import trim
 from utils.records import normalize_date
 
@@ -43,7 +43,6 @@ def bounded_web_retrieval(value):
     return {
         "url": value.get("url"),
         "retrieved_at": value.get("retrieved_at"),
-        "metadata_status": value.get("metadata_status"),
         "metadata": {
             key: trim(metadata[key], 1000) if key == "description" else metadata[key]
             for key in fields
@@ -96,7 +95,7 @@ def text_input(record, extra):
             "matched_frames",
             "match_count",
         )
-        for page in (image_search.get("pages") or [])[:5]:
+        for page in (image_search.get("pages") or [])[:10]:
             pages.append(
                 {
                     key: trim(page[key], 400)
@@ -139,7 +138,7 @@ def text_input(record, extra):
                     for key in fields
                     if item.get(key) is not None
                 }
-                for item in search.get("results", [])[:5]
+                for item in search.get("results", [])[:10]
             ],
         }
     return {
@@ -187,6 +186,7 @@ def build_text_grounding(record, extra):
     supplied_evidence = text_input(record, extra)
     grounding_text = json.dumps(supplied_evidence, ensure_ascii=False)
     current_video = supplied_evidence.get("current_video") or {}
+    date_verification = (extra.get("verification") or {}).get("date") or {}
     event_evidence = {
         "claim": supplied_evidence.get("claim"),
         "fact_check_article": supplied_evidence.get("fact_check_article"),
@@ -195,6 +195,8 @@ def build_text_grounding(record, extra):
         "visual_analysis": supplied_evidence.get("visual_analysis"),
         "title": current_video.get("title"),
         "description": current_video.get("description"),
+        "earliest_online_date": date_verification.get("earliest_online_date"),
+        "video_upload_date": current_video.get("upload_date"),
         "reverse_image_candidates": supplied_evidence.get("reverse_image_candidates"),
         "retrieved_event_candidates": [
             item

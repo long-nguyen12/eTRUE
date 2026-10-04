@@ -1,18 +1,20 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import re
+from urllib.parse import urlsplit
 
-from pillars.source import OFFICIAL_SOURCES
+from pillars.source import get_platform_source
 from utils.evidence import add_evidence, remove_evidence_type
 from utils.errors import optional_result
 from utils.files import now, read_json, write_json
+from utils.json_ld import public_http_url
 from utils.media_metadata import (
     CORE_METADATA_FIELDS,
-    cookie_file_from_env,
     extract_media,
-    public_http_url,
 )
 from utils.records import normalize_date, normalize_platform, sidecar_path
 from utils.utils import normalize_social_url
+from utils.ytdlp import cookie_file_from_env
 
 
 METADATA_FIELD_PATHS = {
@@ -59,18 +61,46 @@ def restore_true_metadata(record, extra):
         (extra.get("normalized_video_information") or {}).get("platform")
         or video.get("platform")
     )
-    verification["source"]["uploader_name"] = OFFICIAL_SOURCES.get(platform)
+    official_source = get_platform_source(platform)
+    verification["source"]["uploader_name"] = official_source["name"] if official_source else None
     verification["source"]["uploader_profile"] = None
     verification["date"]["video_upload_date"] = normalize_date(video.get("video_date"))
     verification["motivation"]["original_caption"] = video.get("video_headline")
     verification["motivation"]["original_description"] = video.get("video_description")
 
 
-def apply_metadata(extra, extraction, retrieved_at, source):
+def extract_uploader_from_url(url):
+    """Infer an account identifier only when the URL path contains one."""
+    parsed = urlsplit(str(url or "").strip())
+    host = (parsed.hostname or "").lower()
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts or parsed.scheme not in {"http", "https"}:
+        return None, None
+    if host == "youtube.com" or host.endswith(".youtube.com"):
+        handle = re.match(r"^/@([^/]+)(?:/|$)", parsed.path)
+        if handle:
+            name = handle.group(1)
+            return name, "https://www.youtube.com/@" + name
+        channel = re.match(r"^/(channel|user|c)/([^/]+)(?:/|$)", parsed.path)
+        if channel:
+            return channel.group(2), "https://www.youtube.com/" + channel.group(1) + "/" + channel.group(2)
+    if host == "facebook.com" or host.endswith(".facebook.com"):
+        if parts[0].lower() not in {
+            "video", "videos", "watch", "reel", "share", "groups", "pages",
+            "plugins", "login", "profile.php", "story.php", "permalink.php", "l.php",
+        }:
+            return parts[0], "https://www.facebook.com/" + parts[0]
+    if host in {"twitter.com", "x.com"} or host.endswith((".twitter.com", ".x.com")):
+        if parts[0].lower() not in {"i", "status", "intent", "share", "home", "search", "explore", "hashtag", "login"}:
+            return "@" + parts[0], "https://x.com/" + parts[0]
+    return None, None
+
+
+def apply_metadata(extra, extraction, retrieved_at, source, original_url=None):
     remove_evidence_type(extra, "platform_metadata")
+    remove_evidence_type(extra, "uploader_url_pattern")
     metadata = extraction["metadata"]
     verification = extra["verification"]
-    verification["source"]["metadata_status"] = extraction["metadata_status"]
 
     if metadata.get("uploader_name"):
         verification["source"]["uploader_name"] = metadata["uploader_name"]
@@ -83,17 +113,16 @@ def apply_metadata(extra, extraction, retrieved_at, source):
     if metadata.get("description"):
         verification["motivation"]["original_description"] = metadata["description"]
 
-    fields = ["verification.source.metadata_status"]
-    fields.extend(
+    fields = [
         METADATA_FIELD_PATHS[field]
         for field in CORE_METADATA_FIELDS
         if metadata.get(field)
-    )
+    ]
     add_evidence(
         extra,
         "platform_metadata",
         source,
-        "Current video metadata extraction status: " + extraction["metadata_status"] + ".",
+        "Platform metadata retrieved for the available fields.",
         fields=fields,
         retrieved_at=retrieved_at,
         metadata=metadata,
@@ -101,6 +130,23 @@ def apply_metadata(extra, extraction, retrieved_at, source):
         missing_fields=extraction["missing_fields"],
         errors=extraction["errors"],
     )
+
+    uploader_url = original_url or extraction.get("url") or source
+    uploader_name, uploader_profile = extract_uploader_from_url(uploader_url)
+    inferred_fields = []
+    for field, value in (("uploader_name", uploader_name), ("uploader_profile", uploader_profile)):
+        if value and not verification["source"].get(field):
+            verification["source"][field] = value
+            inferred_fields.append(METADATA_FIELD_PATHS[field])
+    if inferred_fields:
+        add_evidence(
+            extra,
+            "uploader_url_pattern",
+            uploader_url,
+            "Uploader account identifier inferred from the video URL path.",
+            fields=inferred_fields,
+            retrieved_at=retrieved_at,
+        )
 
 
 def run(records, output):
@@ -148,7 +194,6 @@ def run(records, output):
             result = {
                 "retrieved_at": retrieved_at,
                 "url": extraction["url"],
-                "metadata_status": extraction["metadata_status"],
                 "metadata": extraction["metadata"],
                 "field_sources": extraction["field_sources"],
                 "missing_fields": extraction["missing_fields"],
@@ -161,7 +206,7 @@ def run(records, output):
             extra = read_json(sidecar_file)
             restore_true_metadata(record, extra)
             evidence_source = extraction["url"] or record["path"].as_posix()
-            apply_metadata(extra, extraction, retrieved_at, evidence_source)
+            apply_metadata(extra, extraction, retrieved_at, evidence_source, original_url=original_url)
 
             if archive:
                 provenance = extra["verification"]["provenance"]

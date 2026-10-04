@@ -35,12 +35,12 @@ def previous_context_is_useful(value, claimed_framing, grounding_text):
         r"\b(actually|originally|previously|filmed|recorded|depicts|footage|newsreel|archive)\b",
         lowered,
     )
-    if not context_cue:
-        return False
-
     summary_words = set(re.findall(r"[a-z0-9]+", lowered))
     evidence_words = set(re.findall(r"[a-z0-9]+", str(grounding_text or "").lower()))
-    return bool(summary_words) and len(summary_words & evidence_words) / len(summary_words) >= 0.7
+    return bool(summary_words) and (
+        bool(context_cue)
+        or len(summary_words & evidence_words) / len(summary_words) >= 0.45
+    )
 
 
 def apply_provenance_rules(verification):
@@ -92,25 +92,12 @@ def _exact_search_phrase_is_present(item):
     return bool(phrase and phrase in haystack)
 
 
-def apply_search_provenance(
-    extra,
-    image_search,
-    evidence_by_url=None,
-    text_results=(),
-):
-    evidence_by_url = evidence_by_url or {}
-    verification = extra["verification"]
-    provenance = verification["provenance"]
-    pages = (image_search or {}).get("pages") or []
+GENERATED_MATCH_SOURCES = {"reverse_image", "transcript_search", "caption_search"}
 
-    generated_sources = {"reverse_image", "transcript_search", "caption_search"}
-    matches = [
-        match
-        for match in provenance.get("near_duplicate_matches") or []
-        if match.get("source") not in generated_sources
-    ]
-    page_by_url = {}
-    match_evidence = []
+
+def _build_image_matches(pages):
+    matches = []
+    matched_pages = []
     for page in pages:
         url = _candidate_url(page)
         if not url:
@@ -128,11 +115,14 @@ def apply_search_provenance(
             or len(page.get("matched_frames") or []),
         }
         matches.append({key: value for key, value in match.items() if value is not None})
-        page_by_url[url] = page
-        evidence_id = evidence_by_url.get(page.get("url")) or evidence_by_url.get(url)
-        if evidence_id:
-            match_evidence.append(evidence_id)
+        matched_pages.append(page)
 
+    return matches, matched_pages
+
+
+def _build_text_matches(text_results):
+    matches = []
+    matched_pages = []
     for item in text_results or []:
         if not _exact_search_phrase_is_present(item):
             continue
@@ -148,66 +138,72 @@ def apply_search_provenance(
             "query": item.get("query"),
         }
         matches.append({key: value for key, value in match.items() if value is not None})
-        page_by_url[url] = item
-        evidence_id = evidence_by_url.get(item.get("url")) or evidence_by_url.get(url)
-        if evidence_id:
-            match_evidence.append(evidence_id)
+        matched_pages.append(item)
 
+    return matches, matched_pages
+
+
+def _merge_matches(matches):
     merged = {}
     for match in matches:
         key = _url_key(match.get("url")) or match.get("claim_id")
         if key not in merged or (
-            match.get("source") not in generated_sources
-            and merged[key].get("source") in generated_sources
+            match.get("source") not in GENERATED_MATCH_SOURCES
+            and merged[key].get("source") in GENERATED_MATCH_SOURCES
         ):
             merged[key] = match
     matches = list(merged.values())
     matches.sort(key=lambda item: (item.get("date") is None, item.get("date") or "", item.get("url") or ""))
+    return matches
+
+
+def _collect_search_matches(extra, pages, text_results, evidence_by_url):
+    provenance = extra["verification"]["provenance"]
+    matches = [
+        match
+        for match in provenance.get("near_duplicate_matches") or []
+        if match.get("source") not in GENERATED_MATCH_SOURCES
+    ]
+    image_matches, image_pages = _build_image_matches(pages)
+    text_matches, text_pages = _build_text_matches(text_results)
+    matches = _merge_matches(matches + image_matches + text_matches)
+    page_by_url = {}
+    match_evidence = []
+    for page in image_pages + text_pages:
+        url = _candidate_url(page)
+        page_by_url[url] = page
+        evidence_id = evidence_by_url.get(page.get("url")) or evidence_by_url.get(url)
+        if evidence_id:
+            match_evidence.append(evidence_id)
     provenance["near_duplicate_matches"] = matches
     if match_evidence:
         add_field_evidence(
-            extra,
-            "verification.provenance.near_duplicate_matches",
-            match_evidence,
+            extra, "verification.provenance.near_duplicate_matches", match_evidence
         )
+    return matches, page_by_url
 
-    current_url = extra.get("normalized_video_information", {}).get("video_url")
-    upload_date = normalize_date(verification["date"].get("video_upload_date"))
-    current = {
-        "url": current_url,
-        "date": upload_date,
-        "priority": 0,
-    }
-    existing_url = provenance.get("earliest_known_url")
-    existing_date = normalize_date(provenance.get("earliest_known_date"))
-    if existing_date and _same_url(existing_url, current_url):
-        current["date"] = min(
-            date for date in (current["date"], existing_date) if date
-        )
+
+def _select_earliest(matches, current):
     dated = [current] if current["date"] else []
-    for match in matches:
-        if match.get("date"):
-            dated.append({**match, "priority": 1})
-    if not dated:
-        if not any(match.get("source") not in generated_sources for match in matches):
-            provenance["provenance_status"] = "unknown"
-            provenance["previous_context_summary"] = None
-        return
-
-    earliest = min(
+    dated.extend({**match, "priority": 1} for match in matches if match.get("date"))
+    return min(
         dated,
         key=lambda item: (
-            item["date"],
-            item.get("priority", 1),
-            item.get("url") or "",
+            item["date"], item.get("priority", 1), item.get("url") or ""
         ),
+        default=None,
     )
+
+
+def _apply_earliest_dates(extra, earliest, matches, current_url, existing_url):
+    verification = extra["verification"]
+    provenance = verification["provenance"]
     provenance["earliest_known_url"] = earliest.get("url")
     provenance["earliest_known_date"] = earliest["date"]
     online_dates = [earliest["date"]]
     if _same_url(existing_url, current_url) or any(
         _same_url(match.get("url"), existing_url)
-        and match.get("source") not in generated_sources
+        and match.get("source") not in GENERATED_MATCH_SOURCES
         for match in matches
     ):
         online_dates.append(
@@ -217,6 +213,12 @@ def apply_search_provenance(
         date for date in online_dates if date
     )
 
+
+def _apply_earliest_context(extra, earliest, current, matches, page_by_url, evidence_by_url):
+    verification = extra["verification"]
+    provenance = verification["provenance"]
+    current_url = current["url"]
+    upload_date = normalize_date(verification["date"].get("video_upload_date"))
     earliest_url = earliest.get("url")
     page = page_by_url.get(earliest_url)
     if _same_url(earliest_url, current_url):
@@ -240,7 +242,7 @@ def apply_search_provenance(
     if not page:
         if any(
             _same_url(match.get("url"), earliest_url)
-            and match.get("source") not in generated_sources
+            and match.get("source") not in GENERATED_MATCH_SOURCES
             for match in matches
         ):
             provenance["provenance_status"] = (
@@ -291,3 +293,36 @@ def apply_search_provenance(
     if source_name:
         verification["source"]["original_source_name"] = source_name
         add_field_evidence(extra, "verification.source.original_source_name", evidence_ids)
+
+
+def apply_search_provenance(
+    extra,
+    image_search,
+    evidence_by_url=None,
+    text_results=(),
+):
+    evidence_by_url = evidence_by_url or {}
+    verification = extra["verification"]
+    provenance = verification["provenance"]
+    matches, page_by_url = _collect_search_matches(
+        extra, (image_search or {}).get("pages") or [], text_results, evidence_by_url
+    )
+    current = {
+        "url": extra.get("normalized_video_information", {}).get("video_url"),
+        "date": normalize_date(verification["date"].get("video_upload_date")),
+        "priority": 0,
+    }
+    existing_url = provenance.get("earliest_known_url")
+    existing_date = normalize_date(provenance.get("earliest_known_date"))
+    if existing_date and _same_url(existing_url, current["url"]):
+        current["date"] = min(date for date in (current["date"], existing_date) if date)
+    earliest = _select_earliest(matches, current)
+    if earliest is None:
+        if not any(match.get("source") not in GENERATED_MATCH_SOURCES for match in matches):
+            provenance["provenance_status"] = "unknown"
+            provenance["previous_context_summary"] = None
+        return
+    _apply_earliest_dates(extra, earliest, matches, current["url"], existing_url)
+    _apply_earliest_context(
+        extra, earliest, current, matches, page_by_url, evidence_by_url
+    )

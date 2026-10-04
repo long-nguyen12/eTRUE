@@ -4,14 +4,6 @@ from urllib.parse import unquote, urlparse
 
 from utils.evidence import add_field_evidence
 
-OFFICIAL_SOURCES = {
-    "cnbc": "CNBC",
-    "foxnews": "Fox News",
-    "nbcnews": "NBC News",
-    "nytimes": "The New York Times",
-    "today": "TODAY",
-}
-
 SOURCE_TYPES = {
     "eyewitness",
     "news outlet",
@@ -37,17 +29,91 @@ GENERIC_SOURCE_NAMES = {
 }
 
 
-SOURCE_ALIAS_GROUPS = {
-    "agence france presse": {"afp", "agence france-presse", "agence france presse"},
-    "associated press": {"ap", "ap news", "associated press"},
-    "bbc news": {"bbc", "bbc news"},
-    "c span": {"c-span", "cspan", "c span"},
-    "cnbc": {"cnbc", "cnbc television"},
-    "fox news": {"foxnews", "fox news"},
-    "nbc news": {"nbcnews", "nbc news"},
-    "new york times": {"nyt", "nytimes", "ny times", "the new york times"},
-    "reuters": {"reuters", "reuters news"},
-    "today": {"today", "today show", "the today show"},
+KNOWN_SOURCES = {
+    "agence france presse": {
+        "name": "AFP", "platform": "afp", "source_type": "news outlet",
+        "aliases": {"afp", "agence france-presse", "agence france presse"},
+    },
+    "associated press": {
+        "name": "AP News", "platform": "apnews", "source_type": "news outlet",
+        "aliases": {"ap", "apnews", "ap news", "associated press"},
+    },
+    "bbc news": {
+        "name": "BBC News", "platform": "bbc", "source_type": "news outlet",
+        "aliases": {"bbc", "bbc news"},
+    },
+    "c span": {
+        "name": "C-SPAN", "platform": "cspan", "source_type": "news outlet",
+        "aliases": {"c-span", "cspan", "c span"},
+    },
+    "cnn": {
+        "name": "CNN", "platform": "cnn", "source_type": "news outlet",
+        "aliases": {"cnn", "cnn news"},
+    },
+    "cnbc": {
+        "name": "CNBC", "platform": "cnbc", "source_type": "news outlet",
+        "aliases": {"cnbc", "cnbc television"},
+    },
+    "guardian": {
+        "name": "The Guardian", "platform": "theguardian", "source_type": "news outlet",
+        "aliases": {"theguardian", "the guardian", "guardian"},
+    },
+    "dw news": {
+        "name": "DW News", "platform": "dw", "source_type": "news outlet",
+        "aliases": {"dw", "dw news", "deutsche welle"},
+    },
+    "abc news": {
+        "name": "ABC News", "platform": "abc", "source_type": "news outlet",
+        "aliases": {"abc", "abc news", "abcnews"},
+    },
+    "cbs news": {
+        "name": "CBS News", "platform": "cbsnews", "source_type": "news outlet",
+        "aliases": {"cbsnews", "cbs news"},
+    },
+    "pbs newshour": {
+        "name": "PBS NewsHour", "platform": "pbs", "source_type": "news outlet",
+        "aliases": {"pbs", "pbs news", "pbs newshour"},
+    },
+    "fox news": {
+        "name": "Fox News", "platform": "foxnews", "source_type": "news outlet",
+        "aliases": {"foxnews", "fox news"},
+    },
+    "nbc news": {
+        "name": "NBC News", "platform": "nbcnews", "source_type": "news outlet",
+        "aliases": {"nbcnews", "nbc news"},
+    },
+    "new york times": {
+        "name": "The New York Times", "platform": "nytimes", "source_type": "news outlet",
+        "aliases": {"nyt", "nytimes", "ny times", "the new york times"},
+    },
+    "reuters": {
+        "name": "Reuters", "platform": "reuters", "source_type": "news outlet",
+        "aliases": {"reuters", "reuters news"},
+    },
+    "washington post": {
+        "name": "The Washington Post", "platform": "washingtonpost", "source_type": "news outlet",
+        "aliases": {"washingtonpost", "washington post", "the washington post"},
+    },
+    "usa today": {
+        "name": "USA Today", "platform": "usatoday", "source_type": "news outlet",
+        "aliases": {"usatoday", "usa today"},
+    },
+    "sky news": {
+        "name": "Sky News", "platform": "sky", "source_type": "news outlet",
+        "aliases": {"sky", "sky news", "skynews"},
+    },
+    "france 24": {
+        "name": "France 24", "platform": "france24", "source_type": "news outlet",
+        "aliases": {"france24", "france 24"},
+    },
+    "al jazeera": {
+        "name": "Al Jazeera", "platform": "aljazeera", "source_type": "news outlet",
+        "aliases": {"aljazeera", "al jazeera"},
+    },
+    "today": {
+        "name": "TODAY", "platform": "today", "source_type": "news outlet",
+        "aliases": {"today", "today show", "the today show"},
+    },
 }
 
 
@@ -69,8 +135,8 @@ def _normalize_source_text(value):
 
 
 _NORMALIZED_SOURCE_ALIASES = {
-    canonical: {_normalize_source_text(alias) for alias in aliases | {canonical}}
-    for canonical, aliases in SOURCE_ALIAS_GROUPS.items()
+    canonical: {_normalize_source_text(alias) for alias in source["aliases"] | {canonical}}
+    for canonical, source in KNOWN_SOURCES.items()
 }
 _SOURCE_ALIAS_LOOKUP = {
     alias: canonical
@@ -83,6 +149,17 @@ def normalize_source_name(value):
     normalized = _normalize_source_text(value)
     normalized = re.sub(r"^the\s+", "", normalized)
     return _SOURCE_ALIAS_LOOKUP.get(normalized, normalized)
+
+
+def get_known_source(value):
+    return KNOWN_SOURCES.get(normalize_source_name(value))
+
+
+def get_platform_source(platform):
+    return next(
+        (source for source in KNOWN_SOURCES.values() if source["platform"] == platform),
+        None,
+    )
 
 
 def source_entities_match(left, right):
@@ -135,7 +212,7 @@ def apply_source_rules(extra, grounding_text, protected_source, evidence_ids):
         source_type = None
         source["source_type"] = None
 
-    if original_source and not protected_source and source_type is None:
+    if original_source and source_type in {None, "unknown"}:
         normalized_evidence = _normalize_source_text(grounding_text)
         source_windows = []
         for alias in _source_aliases(original_source):
@@ -148,13 +225,11 @@ def apply_source_rules(extra, grounding_text, protected_source, evidence_ids):
                 )
 
         satire_terms = r"\b(satire|satirical|fiction|fabricated|fake news)\b"
-        canonical_source = normalize_source_name(original_source)
-        if any(re.search(satire_terms, window) for window in source_windows):
+        known_source = get_known_source(original_source)
+        if not protected_source and any(re.search(satire_terms, window) for window in source_windows):
             source["source_type"] = "satire source"
-        elif canonical_source in {
-            normalize_source_name(name) for name in OFFICIAL_SOURCES.values()
-        }:
-            source["source_type"] = "news outlet"
+        elif known_source:
+            source["source_type"] = known_source["source_type"]
         else:
             source["source_type"] = "unknown"
         add_field_evidence(

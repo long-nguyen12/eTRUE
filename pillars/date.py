@@ -1,11 +1,12 @@
 import calendar
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import NamedTuple
 
 
 DATE_MISMATCHES = {"same", "older video", "newer video", "wrong event date", "unknown"}
 DATE_GRANULARITIES = {"day", "month", "year", "range", "unknown"}
+UPLOAD_DATE_TOLERANCE = timedelta(days=30)
 
 
 class _ParsedDate(NamedTuple):
@@ -263,7 +264,10 @@ def apply_date_rules(verification):
         date_fields["date_mismatch_type"] = None
         return
 
-    if estimated_parsed and upload_parsed and estimated_parsed.start > upload_parsed.end:
+    if (
+        estimated_parsed and upload_parsed
+        and estimated_parsed.start - upload_parsed.end > UPLOAD_DATE_TOLERANCE
+    ):
         date_fields["estimated_date"] = None
         date_fields["capture_date_granularity"] = None
         date_fields["date_mismatch_type"] = None

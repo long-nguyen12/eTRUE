@@ -2,7 +2,16 @@
 from copy import deepcopy
 
 
-METADATA_STATUSES = {"complete", "partial", "missing"}
+CLAIM_RATINGS = (
+    "True",
+    "Mostly True",
+    "Mixture",
+    "Mostly False",
+    "False",
+    "Miscaptioned",
+    "Correct Attribution",
+    "Fake",
+)
 
 
 VERIFICATION_DEFAULTS = {
@@ -15,7 +24,6 @@ VERIFICATION_DEFAULTS = {
         "provenance_mismatch": None,
     },
     "source": {
-        "metadata_status": None,
         "uploader_name": None,
         "uploader_profile": None,
         "original_source_name": None,
