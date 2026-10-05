@@ -31,7 +31,7 @@ def parse_args():
     parser.add_argument("stage", choices=PIPELINE_STAGES + ("all",))
     parser.add_argument("--source", type=Path, default=Path("data/TRUE_Dataset"))
     parser.add_argument("--output", type=Path, default=Path("data/eTRUE"))
-    parser.add_argument("--ids", default="data/eTRUE/pilot.txt", help="ID file or 'all'")
+    parser.add_argument("--ids", default="all", help="ID file or 'all' (default: all records)")
     parser.add_argument("--limit", type=int, default=None, help="Limit the number of records to process")
     parser.add_argument(
         "--force", action="store_true", help="Overwrite existing bootstrap fields"

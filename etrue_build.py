@@ -147,40 +147,6 @@ def write_splits(output, split_by_id):
         (split_dir / (split + ".txt")).write_text("\n".join(ids) + "\n", encoding="utf-8")
 
 
-def choose_pilot(records, split_by_id, seed, per_rating):
-    candidates = defaultdict(lambda: defaultdict(list))
-    for record in records:
-        claim_id = record["claim_id"]
-        if split_by_id[claim_id] != "train":
-            continue
-        data = record["data"]
-        rating = str(data.get("rating") or "unknown")
-        video = data.get("video_information") or {}
-        platform = normalize_platform(video.get("platform"))
-        candidates[rating][platform].append(claim_id)
-
-    selected = []
-    for rating in sorted(candidates):
-        by_platform = candidates[rating]
-        platforms = sorted(by_platform)
-        for ids in by_platform.values():
-            ids.sort(key=lambda claim_id: hashlib.sha256(
-                (str(seed) + ":pilot:" + claim_id).encode("utf-8")
-            ).hexdigest())
-
-        rating_selection = []
-        while len(rating_selection) < per_rating:
-            added = False
-            for platform in platforms:
-                if by_platform[platform] and len(rating_selection) < per_rating:
-                    rating_selection.append(by_platform[platform].pop(0))
-                    added = True
-            if not added:
-                break
-        selected.extend(rating_selection)
-    return sorted(selected)
-
-
 def check_output(records, output, split_by_id, group_by_id):
     expected_ids = {record["claim_id"] for record in records}
     annotation_dir = output / "annotations"
@@ -210,7 +176,7 @@ def check_output(records, output, split_by_id, group_by_id):
         raise ValueError("; ".join(errors))
 
 
-def build(source, output, seed=2026, pilot_per_rating=15, reset_annotations=False):
+def build(source, output, seed=42, reset_annotations=False):
     records = load_records(source)
     annotation_dir = output / "annotations"
     annotation_dir.mkdir(parents=True, exist_ok=True)
@@ -227,21 +193,8 @@ def build(source, output, seed=2026, pilot_per_rating=15, reset_annotations=Fals
             write_json(annotation_path, make_sidecar(record, source))
 
     write_splits(output, split_by_id)
-    pilot_ids = choose_pilot(records, split_by_id, seed, pilot_per_rating)
-    (output / "pilot.txt").write_text("\n".join(pilot_ids) + "\n", encoding="utf-8")
     report = make_report(records, split_by_id, group_by_id)
     report["split_seed"] = seed
-    report["pilot_samples"] = len(pilot_ids)
-    report["pilot_per_rating"] = pilot_per_rating
-    pilot_set = set(pilot_ids)
-    pilot_records = [record for record in records if record["claim_id"] in pilot_set]
-    report["pilot_ratings"] = dict(sorted(Counter(
-        str(record["data"].get("rating") or "unknown") for record in pilot_records
-    ).items()))
-    report["pilot_platforms"] = dict(sorted(Counter(
-        normalize_platform((record["data"].get("video_information") or {}).get("platform"))
-        for record in pilot_records
-    ).items()))
     write_json(output / "build_report.json", report)
     check_output(records, output, split_by_id, group_by_id)
     return report
@@ -251,8 +204,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path("data/TRUE_Dataset"))
     parser.add_argument("--output", type=Path, default=Path("data/eTRUE"))
-    parser.add_argument("--seed", type=int, default=2026)
-    parser.add_argument("--pilot-per-rating", type=int, default=15)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--reset-annotations", action="store_true")
     return parser.parse_args()
 
@@ -263,7 +215,6 @@ def main():
         args.source,
         args.output,
         args.seed,
-        args.pilot_per_rating,
         args.reset_annotations,
     )
     counts = report["new_split_counts"]
