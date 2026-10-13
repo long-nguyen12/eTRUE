@@ -14,7 +14,6 @@ def run_true_test(
     output_dir: Path,
     model_cache: Path,
     limit=None,
-    prepare_only=False
 ) -> dict:
     dataset_root = Path(dataset_root).resolve()
     output_dir = Path(output_dir).resolve()
@@ -25,7 +24,6 @@ def run_true_test(
         "split": "test",
         "selected_records": len(identifiers),
         "processed_records": 0,
-        "mode": "prepare" if prepare_only else "verify",
         "started_at": now(),
         "status": "running",
         "records": [],
@@ -42,21 +40,18 @@ def run_true_test(
             payload = load_test_request(dataset_root, identifier)
             write_json(request_file, payload)
             request_written = True
-            if prepare_only:
-                result = {"status": "prepared", "verdict": None, "errors": []}
-            else:
-                result = verify_claim(
-                    payload,
-                    work_dir=output_dir / "assets" / identifier,
-                    model_cache=Path(model_cache),
-                )
+            result = verify_claim(
+                payload,
+                work_dir=output_dir / "assets" / identifier,
+                model_cache=Path(model_cache),
+            )
         except (OSError, ValueError) as error:
             result = {
                 "status": "error",
                 "verdict": None,
                 "errors": [{"stage": "input", "message": str(error)}],
             }
-        if not prepare_only or result["status"] == "error":
+        if result["status"] == "error":
             result["claim_id"] = identifier
             write_json(result_file, result)
         status_counts[result["status"]] += 1
@@ -69,9 +64,7 @@ def run_true_test(
                 "verdict": result.get("verdict"),
                 "request_file": str(request_file) if request_written else None,
                 "result_file": (
-                    str(result_file)
-                    if not prepare_only or result["status"] == "error"
-                    else None
+                    str(result_file) if result["status"] == "error" else None
                 ),
                 "errors": result.get("errors", []),
             }
@@ -109,4 +102,3 @@ def run_true_test(
         finished_at=now(), elapsed_seconds=round(time.perf_counter() - started, 3)
     )
     write_json(output_dir / "batch_report.json", report)
-    return report

@@ -43,12 +43,10 @@ def list_test_ids(dataset_root, limit=None):
             if line.strip()
         ]
     else:
-        identifiers = [path.stem for path in sorted((root / "test").glob("*.json"))]
+        identifiers = [path.stem for path in sorted(root.glob("*.json"))]
     seen = set()
     for identifier in identifiers:
         _identifier(identifier)
-        if identifier.casefold() in seen:
-            raise ValueError("Duplicate test identifier: " + identifier)
         seen.add(identifier.casefold())
     return identifiers if limit is None else identifiers[:limit]
 
@@ -62,7 +60,7 @@ def _safe_text(value):
 def load_test_request(dataset_root, claim_id):
     root = Path(dataset_root).resolve()
     claim_id = _identifier(claim_id)
-    with (root / "test" / (claim_id + ".json")).open(encoding="utf-8-sig") as handle:
+    with (root / (claim_id + ".json")).open(encoding="utf-8-sig") as handle:
         data = json.load(handle)
     video = data.get("video_information") or {}
     payload = {"claim": data.get("claim")}
