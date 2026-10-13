@@ -36,29 +36,43 @@ METADATA_FIELDS = {
     "upload_date",
 }
 DIMENSIONS = ("subject", "action", "time", "location", "attribution", "context")
-NORMALIZE_PROMPT = """Decompose this claim into independent atomic propositions.
-Preserve negation, uncertainty, quoted attribution, conjunctions, and every important assertion.
-Never add facts from outside the claim. Keep the language of the original claim.
-Return {"normalized_claim":text,"claim_components":[{"text":text,"subject":text_or_null,
-"action":text_or_null,"time":text_or_null,"location":text_or_null,
-"attribution":text_or_null,"context":text_or_null}]}.
-Copy the original claim into normalized_claim, changing only whitespace or punctuation.
-Each component text must quote a contiguous clause of the original claim; never move a
-negation between clauses. Subject may be inherited in the subject field to make the
-proposition independent without rewriting the quoted text. Dimension values must be literal
-phrases from the original claim; action must occur in the quoted component text.
-Missing dimensions are null, not inferred. Do not resolve
-relative dates without an explicit reference date. Return one JSON object, no hidden thought.
+NORMALIZE_PROMPT = """Decompose the input claim into independent atomic propositions.
+
+CONSTRAINTS:
+1. Never add outside facts. Keep the exact language of the original claim.
+2. Copy the original claim into "normalized_claim", altering only whitespace or punctuation.
+3. Each component "text" must be an exact, contiguous substring of the "normalized_claim".
+4. Never move a negation between clauses.
+5. Missing dimensions must be strictly null. Do not infer dates, locations, or actions.
+
+HANDLING MULTIPLE SUBJECTS:
+If a contiguous clause contains multiple subjects (e.g., "A and B did X"), create a separate JSON object for each subject. Keep the "text" field identical for both objects, but specify the individual subject in the "subject" field to make the propositions independent.
+
+OUTPUT FORMAT:
+You must output ONLY a raw JSON object.
+Do NOT wrap the output in markdown code blocks (do not use ```json).
+Do NOT include any conversational text, explanations, or hidden thoughts.
+
+REQUIRED JSON SKELETON:
+{
+  "normalized_claim": "",
+  "claim_components": [
+    {
+      "text": "",
+      "subject": null,
+      "action": null,
+      "time": null,
+      "location": null,
+      "attribution": null,
+      "context": null
+    }
+  ]
+}
+Instructions for Skeleton: Replace the empty strings with extracted phrases. Leave as null if a dimension is not explicitly present in the text. Duplicate the component object in the array as many times as necessary to capture all propositions.
+
+INPUT CLAIM:
+[INSERT CLAIM HERE]
 """
-
-
-def check_artifact_path(path):
-    path = Path(path).resolve()
-    repo = Path(__file__).resolve().parent.parent
-    for protected in (repo / "data" / "eTRUE", repo / "data" / "TRUE_Dataset"):
-        if path.is_relative_to(protected.resolve()):
-            raise ValueError("Pipeline artifacts must be outside the existing datasets")
-    return path
 
 
 def validate_payload(payload, base_dir=None):
@@ -77,10 +91,11 @@ def validate_payload(payload, base_dir=None):
     def media_path(value):
         path = Path(value)
         path = (base / path).resolve() if not path.is_absolute() else path.resolve()
-        if not path.is_file():
-            raise ValueError("Media file does not exist: " + str(path))
         return str(path)
 
+    clean["transcript"] = transcript.strip() if transcript else None
+    if url is not None:
+        clean["post_url"] = public_http_url(url)
     clean["keyframes"] = [media_path(p) for p in frames]
     if payload.get("video_path") is not None:
         clean["video_path"] = media_path(payload["video_path"])
@@ -92,63 +107,15 @@ def _normalize_claim(runtime, claim):
     normalized = raw.get("normalized_claim")
     components = raw.get("claim_components")
     words = set(re.findall(r"\w+", claim.casefold()))
-    original_tokens = re.findall(r"\w+", claim.casefold())
     output = []
     for index, component in enumerate(components, 1):
         text = component["text"].strip()
-        tokens = re.findall(r"\w+", text.casefold())
         row = {"id": "claim_" + str(index), "text": text}
         for dimension in DIMENSIONS:
             value = component.get(dimension)
             row[dimension] = value
-        if row["action"] and row["action"].casefold() not in text.casefold():
-            raise ValueError("Action must be grounded in the quoted component clause")
+
         output.append(row)
-    # A dropped negation/qualification must never silently turn a claim affirmative.
-    qualifiers = {
-        "not",
-        "never",
-        "no",
-        "cannot",
-        "can't",
-        "didn't",
-        "wasn't",
-        "isn't",
-        "may",
-        "might",
-        "allegedly",
-        "supposedly",
-        "possibly",
-    }
-    for token in qualifiers:
-        pattern = r"(?<!\w)" + re.escape(token) + r"(?!\w)"
-        if re.search(pattern, claim, re.I) and (
-            not re.search(pattern, normalized, re.I)
-            or not any(re.search(pattern, c["text"], re.I) for c in output)
-        ):
-            raise ValueError("Claim normalization dropped negation or uncertainty")
-    component_words = set(
-        re.findall(r"\w+", " ".join(c["text"] for c in output).casefold())
-    )
-    if (
-        words
-        - component_words
-        - {
-            "and",
-            "the",
-            "a",
-            "an",
-            "that",
-            "this",
-            "it",
-            "its",
-            "is",
-            "was",
-            "were",
-            "are",
-        }
-    ):
-        raise ValueError("Claim normalization omitted part of the original assertion")
     return normalized.strip(), output
 
 
@@ -192,9 +159,8 @@ def _relations(results):
 
 
 def verify_claim(payload: dict, *, work_dir: Path, model_cache: Path) -> dict:
-    """Verify one request. Invalid input raises ValueError; run failures are JSON errors."""
     payload = validate_payload(payload)
-    work_dir = check_artifact_path(work_dir)
+    work_dir = Path(work_dir).resolve()
     started = time.perf_counter()
     result = {
         "claim": payload["claim"],

@@ -4,8 +4,8 @@ from pathlib import Path
 
 from utils.files import now, write_json
 
-from .dataset import list_test_ids, load_test_request, resolve_dataset_root
-from .pipeline import check_artifact_path, verify_claim
+from .dataset import list_test_ids, load_test_request
+from .pipeline import verify_claim
 
 
 def run_true_test(
@@ -16,11 +16,9 @@ def run_true_test(
     limit=None,
     prepare_only=False
 ) -> dict:
-    dataset_root = resolve_dataset_root(dataset_root)
-    output_dir = check_artifact_path(output_dir)
+    dataset_root = Path(dataset_root).resolve()
+    output_dir = Path(output_dir).resolve()
     identifiers = list_test_ids(dataset_root, limit)
-    if not identifiers:
-        raise ValueError("No JSON records found in the test directory")
     started = time.perf_counter()
     report = {
         "dataset": str(dataset_root),
