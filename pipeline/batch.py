@@ -6,6 +6,7 @@ from utils.files import now, write_json
 
 from .dataset import list_test_ids, load_test_request
 from .pipeline import verify_claim
+from .runtime import QwenRuntime
 
 
 def run_true_test(
@@ -32,66 +33,82 @@ def run_true_test(
         "stopped_early": False,
     }
     status_counts, verdict_counts = Counter(), Counter()
-    for index, identifier in enumerate(identifiers, 1):
-        request_file = output_dir / "requests" / (identifier + ".json")
-        result_file = output_dir / "results" / (identifier + ".json")
-        request_written = False
-        try:
-            payload = load_test_request(dataset_root, identifier)
-            write_json(request_file, payload)
-            request_written = True
-            result = verify_claim(
-                payload,
-                work_dir=output_dir / "assets" / identifier,
-                model_cache=Path(model_cache),
+    runtime = None
+    try:
+        for index, identifier in enumerate(identifiers, 1):
+            request_file = output_dir / "requests" / (identifier + ".json")
+            result_file = output_dir / "results" / (identifier + ".json")
+            request_written = False
+            try:
+                payload = load_test_request(dataset_root, identifier)
+                write_json(request_file, payload)
+                request_written = True
+                if runtime is None:
+                    try:
+                        runtime = QwenRuntime(Path(model_cache))
+                    except Exception as error:
+                        result = {
+                            "status": "error",
+                            "verdict": None,
+                            "errors": [{"stage": "model", "message": str(error)}],
+                        }
+                if runtime is not None:
+                    result = verify_claim(
+                        payload,
+                        work_dir=output_dir / "assets" / identifier,
+                        model_cache=Path(model_cache),
+                        runtime=runtime,
+                    )
+            except (OSError, ValueError) as error:
+                result = {
+                    "status": "error",
+                    "verdict": None,
+                    "errors": [{"stage": "input", "message": str(error)}],
+                }
+            if result["status"] == "error":
+                result["claim_id"] = identifier
+                write_json(result_file, result)
+            status_counts[result["status"]] += 1
+            if result.get("verdict"):
+                verdict_counts[result["verdict"]] += 1
+            report["records"].append(
+                {
+                    "claim_id": identifier,
+                    "status": result["status"],
+                    "verdict": result.get("verdict"),
+                    "request_file": str(request_file) if request_written else None,
+                    "result_file": (
+                        str(result_file) if result["status"] == "error" else None
+                    ),
+                    "errors": result.get("errors", []),
+                }
             )
-        except (OSError, ValueError) as error:
-            result = {
-                "status": "error",
-                "verdict": None,
-                "errors": [{"stage": "input", "message": str(error)}],
-            }
-        if result["status"] == "error":
-            result["claim_id"] = identifier
-            write_json(result_file, result)
-        status_counts[result["status"]] += 1
-        if result.get("verdict"):
-            verdict_counts[result["verdict"]] += 1
-        report["records"].append(
-            {
-                "claim_id": identifier,
-                "status": result["status"],
-                "verdict": result.get("verdict"),
-                "request_file": str(request_file) if request_written else None,
-                "result_file": (
-                    str(result_file) if result["status"] == "error" else None
+            report.update(
+                processed_records=len(report["records"]),
+                status_counts=dict(status_counts),
+                verdict_counts=dict(verdict_counts),
+            )
+            # A failed CUDA/model setup will fail every request; leave remaining IDs unprocessed.
+            if result["status"] == "error" and any(
+                e.get("stage") == "model" for e in result.get("errors", [])
+            ):
+                report["stopped_early"] = True
+            write_json(output_dir / "batch_report.json", report)
+            print(
+                "[{0}/{1}] {2}: {3}, verdict={4}".format(
+                    index,
+                    len(identifiers),
+                    identifier,
+                    result["status"],
+                    result.get("verdict"),
                 ),
-                "errors": result.get("errors", []),
-            }
-        )
-        report.update(
-            processed_records=len(report["records"]),
-            status_counts=dict(status_counts),
-            verdict_counts=dict(verdict_counts),
-        )
-        # A failed CUDA/model setup will fail every request; leave remaining IDs unprocessed.
-        if result["status"] == "error" and any(
-            e.get("stage") == "model" for e in result.get("errors", [])
-        ):
-            report["stopped_early"] = True
-        write_json(output_dir / "batch_report.json", report)
-        print(
-            "[{0}/{1}] {2}: {3}, verdict={4}".format(
-                index,
-                len(identifiers),
-                identifier,
-                result["status"],
-                result.get("verdict"),
-            ),
-            flush=True,
-        )
-        if report["stopped_early"]:
-            break
+                flush=True,
+            )
+            if report["stopped_early"]:
+                break
+    finally:
+        if runtime is not None:
+            runtime.unload()
     error_count = status_counts.get("error", 0)
     report["status"] = (
         "error"

@@ -1,5 +1,3 @@
-"""Grounded extraction, existing pillar rules, and verdict validation."""
-
 from copy import deepcopy
 import json
 
@@ -25,7 +23,7 @@ from pillars.source import SOURCE_TYPES, apply_source_rules, source_name_is_grou
 from stages.geocode import classify_location_mismatch, geocode
 from utils.schema import empty_verification
 
-from .agents import PILLAR_AGENTS, VERDICT_AGENT
+from .agents import PILLAR_PROMPTS, run_pillar
 from .evidence import canonical_source, normalized_text, validate_citations
 from .text import plain_explanation
 
@@ -199,7 +197,7 @@ def _geocode(extra, store, errors):
     if not location.get("verified_location"):
         return
     with requests.Session() as session:
-        session.headers["User-Agent"] = "eTRUE-independent-verification/1.0"
+        session.headers["User-Agent"] = "eTRUE-verification/1.0"
         rows = {}
         for role, field in (
             ("verified", "verified_location"),
@@ -258,11 +256,11 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
     core = empty_assessment()
     claimed_fields = deepcopy(verification)
     shared_evidence = deepcopy(sorted(store.items, key=lambda e: not e.get("verified")))
-    for agent in PILLAR_AGENTS:
-        pillar = agent.pillar
+    for pillar in PILLAR_PROMPTS:
         try:
-            raw = agent.run(
+            raw = run_pillar(
                 runtime,
+                pillar,
                 rules=RULES,
                 component=component,
                 applicable=applicable[pillar],
@@ -360,8 +358,8 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
         for path, ids in extra["field_evidence"].items()
         if verification[path.split(".")[1]].get(path.split(".")[2]) is not None
     }
-    for agent in PILLAR_AGENTS:
-        assessments[agent.pillar]["agent"] = agent.name
+    for pillar in PILLAR_PROMPTS:
+        assessments[pillar]["agent"] = pillar + "_agent"
     core["agent"] = "provenance_agent"
     return {
         "component_id": component["id"],
@@ -409,16 +407,18 @@ Markdown, HTML, JSON, URLs, evidence IDs or citations. Put quotes and IDs in cit
 No hidden thinking trace. Check findings from all five independent pillar agents.
 """
     )
-    raw = VERDICT_AGENT.run(
-        runtime,
-        instructions=instructions,
-        data={
+    raw = runtime.generate(
+        "You are verdict_agent. Synthesize the validated findings of the five pillar agents.\n"
+        + instructions,
+        deepcopy({
+            "agent": "verdict_agent",
             "claim_components": components,
             "results": results,
             "eligible_labels": labels,
             "eligible_overall": overall,
             "evidence": sorted(store.items, key=lambda e: not e.get("verified")),
-        },
+        }),
+        max_new_tokens=2048,
     )
     allowed = {"True", "False", "Misleading", "Unverified"}
     if raw.get("verdict") not in allowed or not isinstance(
@@ -538,7 +538,7 @@ No hidden thinking trace. Check findings from all five independent pillar agents
             if a["status"] == "unknown"
         ]
     return {
-        "aggregator_agent": VERDICT_AGENT.name,
+        "aggregator_agent": "verdict_agent",
         "verdict": overall,
         "explanation": explanation,
         "open_questions": questions,

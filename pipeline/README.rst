@@ -19,7 +19,8 @@ requirements into the server environment and install FFmpeg/ffprobe on PATH::
     ffprobe -version
 
 Inference uses Qwen/Qwen3.5-4B, FP16, entirely on cuda:0. There is no CPU fallback
-or offload. Text and vision models load sequentially. The default cache is
+or offload. Text and vision run sequentially using one multimodal model, retained
+across claims in a batch and released when the batch ends. The default cache is
 data/eTRUE/models; use --model-cache to select a server cache directory.
 Missing weights are downloaded through Transformers. The module does not load
 Whisper, even if the repository requirements installed faster-whisper.
@@ -72,6 +73,10 @@ retrieval. Downloaded video and extracted frames persist under work_dir;
 supplied media files are only read. Output/work directories inside the existing
 eTRUE or TRUE_Dataset trees are rejected. Invalid input raises ValueError.
 Runtime failures return status=error and verdict=null.
+
+verify_claim accepts an optional runtime=QwenRuntime(...) for repeated calls.
+Without it, the function creates and releases its own runtime. With a supplied
+runtime, the caller owns it and must call runtime.unload() when finished.
 
 TRUE_Dataset test split
 ----------------------

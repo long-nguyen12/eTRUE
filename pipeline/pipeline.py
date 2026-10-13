@@ -1,12 +1,9 @@
 """Request-scoped orchestration, independent of enrichment and annotation."""
 
 import json
-import re
-import time
 from pathlib import Path
 
 from utils.files import now
-from utils.json_ld import public_http_url
 
 from .assessment import analyze_component, predict_verdict
 from .evidence import EvidenceStore
@@ -15,26 +12,9 @@ from .retrieval import (
     collect_evidence,
     inspect_page,
     is_factcheck_text,
-    is_factcheck_url,
 )
 from .runtime import QwenRuntime
 
-INPUT_FIELDS = {
-    "claim",
-    "video_path",
-    "keyframes",
-    "post_url",
-    "metadata",
-    "transcript",
-}
-METADATA_FIELDS = {
-    "title",
-    "description",
-    "platform",
-    "uploader_name",
-    "uploader_profile",
-    "upload_date",
-}
 DIMENSIONS = ("subject", "action", "time", "location", "attribution", "context")
 NORMALIZE_PROMPT = """Decompose the input claim into independent atomic propositions.
 
@@ -82,7 +62,6 @@ def validate_payload(payload, base_dir=None):
         metadata = {}
     clean["metadata"] = dict(metadata)
     transcript = payload.get("transcript")
-    url = payload.get("post_url")
     frames = payload.get("keyframes", [])
     if frames is None:
         frames = []
@@ -94,8 +73,6 @@ def validate_payload(payload, base_dir=None):
         return str(path)
 
     clean["transcript"] = transcript.strip() if transcript else None
-    if url is not None:
-        clean["post_url"] = public_http_url(url)
     clean["keyframes"] = [media_path(p) for p in frames]
     if payload.get("video_path") is not None:
         clean["video_path"] = media_path(payload["video_path"])
@@ -106,7 +83,6 @@ def _normalize_claim(runtime, claim):
     raw = runtime.generate(NORMALIZE_PROMPT, {"claim": claim}, max_new_tokens=2048)
     normalized = raw.get("normalized_claim")
     components = raw.get("claim_components")
-    words = set(re.findall(r"\w+", claim.casefold()))
     output = []
     for index, component in enumerate(components, 1):
         text = component["text"].strip()
@@ -158,10 +134,15 @@ def _relations(results):
     return relations, trace
 
 
-def verify_claim(payload: dict, *, work_dir: Path, model_cache: Path) -> dict:
+def verify_claim(
+    payload: dict,
+    *,
+    work_dir: Path,
+    model_cache: Path,
+    runtime: QwenRuntime | None = None,
+) -> dict:
     payload = validate_payload(payload)
     work_dir = Path(work_dir).resolve()
-    started = time.perf_counter()
     result = {
         "claim": payload["claim"],
         "normalized_claim": None,
@@ -177,19 +158,20 @@ def verify_claim(payload: dict, *, work_dir: Path, model_cache: Path) -> dict:
         "status": "error",
         "errors": [],
         "started_at": now(),
-        "metrics": {},
     }
     errors = result["errors"]
     store = EvidenceStore()
-    runtime = None
+    owns_runtime = runtime is None
     stage = "model"
     try:
-        runtime = QwenRuntime(Path(model_cache))
+        if runtime is None:
+            runtime = QwenRuntime(Path(model_cache))
+        runtime.last_evidence_ids = []
+        runtime.omitted_evidence_ids = []
         runtime.load_text()
         stage = "normalize"
         normalized, components = _normalize_claim(runtime, payload["claim"])
         result.update(normalized_claim=normalized, claim_components=components)
-        runtime.unload()
         stage = "media"
         media_payload = dict(payload)
         source_page = None
@@ -278,12 +260,12 @@ def verify_claim(payload: dict, *, work_dir: Path, model_cache: Path) -> dict:
         stage = "model"
         runtime.load_text()
         stage = "pillars"
+        reference = {
+            "post_url": payload.get("post_url"),
+            "frames": [str(p) for p in media["frames"]],
+            "video_path": media["video_path"],
+        }
         for component in components:
-            reference = {
-                "post_url": payload.get("post_url"),
-                "frames": [str(p) for p in media["frames"]],
-                "video_path": media["video_path"],
-            }
             result["component_results"].append(
                 analyze_component(component, store, runtime, errors, reference)
             )
@@ -300,24 +282,15 @@ def verify_claim(payload: dict, *, work_dir: Path, model_cache: Path) -> dict:
     except Exception as error:
         errors.append({"stage": stage, "message": str(error)[:500]})
     finally:
-        result["evidence"] = store.items
-        result["evidence_relations"], result["trace"] = _relations(
-            result["component_results"]
-        )
-        result["finished_at"] = now()
-        if runtime is not None:
-            try:
-                result["metrics"] = runtime.metrics()
-                result["metrics"]["omitted_evidence_ids"] = list(
-                    runtime.omitted_evidence_ids
-                )
-            except Exception as error:
-                errors.append({"stage": "metrics", "message": str(error)[:500]})
-                result["status"] = "error"
+        if owns_runtime and runtime is not None:
             try:
                 runtime.unload()
             except Exception as error:
                 errors.append({"stage": "cleanup", "message": str(error)[:500]})
                 result["status"] = "error"
-        result["metrics"]["elapsed_seconds"] = round(time.perf_counter() - started, 3)
+        result["evidence"] = store.items
+        result["evidence_relations"], result["trace"] = _relations(
+            result["component_results"]
+        )
+        result["finished_at"] = now()
     return result

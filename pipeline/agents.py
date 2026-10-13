@@ -1,7 +1,4 @@
-"""Independent pillar roles sharing one local inference runtime."""
-
 from copy import deepcopy
-from dataclasses import dataclass
 import json
 
 from pillars.date import DATE_GRANULARITIES, DATE_MISMATCHES
@@ -26,57 +23,48 @@ ENUMS = {
 }
 
 
-@dataclass(frozen=True)
-class PillarAgent:
-    name: str
-    pillar: str
-    responsibility: str
-
-    def run(
-        self, runtime, *, rules, component, applicable, claimed_fields, media, evidence
-    ):
-        schema = {self.pillar: empty_verification()[self.pillar]}
-        allowed = {
-            field: sorted(values) for field, values in ENUMS[self.pillar].items()
-        }
-        instructions = (
-            rules
-            + "\nYou are "
-            + self.name
-            + ". "
-            + self.responsibility
-            + "\nAssess only the "
-            + self.pillar
-            + " pillar independently. Other agents' conclusions are not evidence."
-            + "\nReturn fields and assessments keyed ONLY by '"
-            + self.pillar
-            + "'."
-            + "\nUse not_applicable when this dimension is not asserted; never treat missing evidence as support."
-            + "\nExtract fields using this schema:\n"
-            + json.dumps(schema)
-            + "\nAllowed categorical values:\n"
-            + json.dumps(allowed)
-        )
-        if self.pillar == "provenance":
-            instructions += "\nAlso return core_assessment with the same assessment structure, checking the asserted subject/action/event."
-        return runtime.generate(
-            instructions,
-            {
-                "agent": self.name,
-                "component": deepcopy(component),
-                "applicable_pillars": {self.pillar: applicable},
-                "claimed_fields": {self.pillar: deepcopy(claimed_fields)},
-                "supplied_media": deepcopy(media),
-                "evidence": deepcopy(evidence),
-            },
-            max_new_tokens=2048,
-        )
+def run_pillar(
+    runtime, pillar, *, rules, component, applicable, claimed_fields, media, evidence
+):
+    name = pillar + "_agent"
+    schema = {pillar: empty_verification()[pillar]}
+    allowed = {field: sorted(values) for field, values in ENUMS[pillar].items()}
+    instructions = (
+        rules
+        + "\nYou are "
+        + name
+        + ". "
+        + PILLAR_PROMPTS[pillar]
+        + "\nAssess only the "
+        + pillar
+        + " pillar independently. Other agents' conclusions are not evidence."
+        + "\nReturn fields and assessments keyed ONLY by '"
+        + pillar
+        + "'."
+        + "\nUse not_applicable when this dimension is not asserted; never treat missing evidence as support."
+        + "\nExtract fields using this schema:\n"
+        + json.dumps(schema)
+        + "\nAllowed categorical values:\n"
+        + json.dumps(allowed)
+    )
+    if pillar == "provenance":
+        instructions += "\nAlso return core_assessment with the same assessment structure, checking the asserted subject/action/event."
+    return runtime.generate(
+        instructions,
+        {
+            "agent": name,
+            "component": deepcopy(component),
+            "applicable_pillars": {pillar: applicable},
+            "claimed_fields": {pillar: deepcopy(claimed_fields)},
+            "supplied_media": deepcopy(media),
+            "evidence": deepcopy(evidence),
+        },
+        max_new_tokens=2048,
+    )
 
 
-PILLAR_AGENTS = (
-    PillarAgent(
-        "provenance_agent",
-        "provenance",
+PILLAR_PROMPTS = {
+    "provenance": (
         "Identify footage history, earlier versions, reuse and context; verify that the supplied media depicts the asserted event.\n"
         "WORKFLOW:\n"
         "1. Check near_duplicate_matches and image_candidate evidence for visually matching pages. Use match_types (full/partial) and clip_similarity scores when available.\n"
@@ -89,11 +77,9 @@ PILLAR_AGENTS = (
         "CONSTRAINTS:\n"
         "- An archive/wayback date is an online availability date, not a capture date.\n"
         "- A search_candidate is not independently verified; only retrieved_page evidence is decisive.\n"
-        "- Do not mark provenance_mismatch based on missing evidence alone.",
+        "- Do not mark provenance_mismatch based on missing evidence alone."
     ),
-    PillarAgent(
-        "source_agent",
-        "source",
+    "source": (
         "Identify who uploaded the video and who originally created, published, or broadcast it.\n"
         "WORKFLOW:\n"
         "1. Extract uploader_name and uploader_profile from platform_metadata or retrieved_page evidence.\n"
@@ -107,11 +93,9 @@ PILLAR_AGENTS = (
         "CONSTRAINTS:\n"
         "- A platform name (YouTube, Facebook) is not a source name.\n"
         "- Do not infer source_type from the claim alone; use evidence about the source entity.\n"
-        "- Do not guess the original source from metadata that only identifies the current uploader.",
+        "- Do not guess the original source from metadata that only identifies the current uploader."
     ),
-    PillarAgent(
-        "date_agent",
-        "date",
+    "date": (
         "Establish when the video was captured or when the depicted event occurred, and compare with the claimed date.\n"
         "WORKFLOW:\n"
         "1. Extract video_upload_date from platform_metadata evidence.\n"
@@ -127,11 +111,9 @@ PILLAR_AGENTS = (
         "- Archive/Wayback date = first online snapshot date, not capture or event date.\n"
         "- Do not use the claimed_date as evidence for estimated_date.\n"
         "- estimated_date must be grounded in retrieved_page evidence; platform_metadata dates alone are insufficient.\n"
-        "- A capture date less precise than the claimed date cannot support a 'same' assessment.",
+        "- A capture date less precise than the claimed date cannot support a 'same' assessment."
     ),
-    PillarAgent(
-        "location_agent",
-        "location",
+    "location": (
         "Determine where the video was captured or where the depicted event occurred.\n"
         "WORKFLOW:\n"
         "1. Extract candidate_locations from retrieved_page evidence, transcript, and metadata "
@@ -147,11 +129,9 @@ PILLAR_AGENTS = (
         "- Geocoding/map lookup alone does not verify an event location; it only normalizes a place name.\n"
         "- A location mentioned in a claim is NOT evidence for verified_location.\n"
         "- Visual clues must be explicitly visible in keyframe analysis, not inferred.\n"
-        "- candidate_locations must be place names (city, region, country), not descriptions of objects.",
+        "- candidate_locations must be place names (city, region, country), not descriptions of objects."
     ),
-    PillarAgent(
-        "motivation_agent",
-        "motivation",
+    "motivation": (
         "Infer the original purpose or framing of the video and determine whether the current claim reframes it.\n"
         "WORKFLOW:\n"
         "1. Extract original_caption and original_description from the earliest known page or most authoritative source page "
@@ -167,24 +147,6 @@ PILLAR_AGENTS = (
         "- original_context_category must be supported by evidence about the original context, not inferred from the claim.\n"
         "- satire as real requires the original source to be a known satire source.\n"
         "- old news as current requires a date mismatch (video significantly predates claimed event).\n"
-        "- If original_caption and original_description are unavailable, set original_context_category to unknown.",
+        "- If original_caption and original_description are unavailable, set original_context_category to unknown."
     ),
-)
-
-
-@dataclass(frozen=True)
-class AggregatorAgent:
-    name: str = "verdict_agent"
-
-    def run(self, runtime, *, instructions, data):
-        return runtime.generate(
-            "You are "
-            + self.name
-            + ". Synthesize the validated findings of the five pillar agents.\n"
-            + instructions,
-            {"agent": self.name, **deepcopy(data)},
-            max_new_tokens=2048,
-        )
-
-
-VERDICT_AGENT = AggregatorAgent()
+}
