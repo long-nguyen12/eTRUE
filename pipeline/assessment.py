@@ -270,7 +270,9 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
                 media=media_reference or {},
                 evidence=shared_evidence,
             )
-            evidence = [e for e in shared_evidence if e["id"] in runtime.last_evidence_ids]
+            evidence = [
+                e for e in shared_evidence if e["id"] in runtime.last_evidence_ids
+            ]
             _copy_fields(extra, raw, (pillar,), evidence)
             raw_assessments = raw.get("assessments") or {}
             if not isinstance(raw_assessments, dict):
@@ -286,9 +288,7 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
                 )
             assessments[pillar] = validated_assessment
         except (ValueError, RuntimeError) as error:
-            errors.append(
-                {"stage": "pillar:" + pillar, "message": str(error)}
-            )
+            errors.append({"stage": "pillar:" + pillar, "message": str(error)})
 
     grounded = " ".join(e["observation"] for e in store.items if e.get("verified"))
     apply_provenance_rules(verification)

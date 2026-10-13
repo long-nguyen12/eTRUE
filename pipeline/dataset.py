@@ -21,8 +21,19 @@ def _identifier(value):
     return value
 
 
+def resolve_dataset_root(path: Path) -> Path:
+    root = Path(path).resolve()
+    if root.name == "test":
+        root = root.parent
+    if not (root / "test").is_dir():
+        raise FileNotFoundError("TRUE_Dataset test directory not found: " + str(root / "test"))
+    return root
+
+
 def list_test_ids(dataset_root, limit=None):
-    root = Path(dataset_root).resolve()
+    root = resolve_dataset_root(dataset_root)
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0):
+        raise ValueError("Limit must be a positive integer")
     manifest = root / "test_set.txt"
     if manifest.is_file():
         identifiers = [line.strip() for line in manifest.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
@@ -44,7 +55,7 @@ def _safe_text(value):
 
 
 def load_test_request(dataset_root, claim_id):
-    root = Path(dataset_root).resolve()
+    root = resolve_dataset_root(dataset_root)
     claim_id = _identifier(claim_id)
     with (root / "test" / (claim_id + ".json")).open(encoding="utf-8-sig") as handle:
         data = json.load(handle)

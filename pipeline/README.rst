@@ -30,37 +30,30 @@ Google Vision key, reverse-image retrieval is recorded as skipped and the run
 is partial. Configured provider failures are reported rather than silently
 switching providers. Social search uses web queries scoped to platform sites.
 
-Request and CLI
----------------
+CLI
+---
 
-Copy example_request.json and replace the claim/URL with your actual input.
-Accepted top-level fields are claim, video_path, keyframes, post_url, metadata,
-and transcript. A non-empty claim and at least one media input are required.
-Unknown fields, including rating, content and verification, are rejected.
-Metadata accepts title, description, platform, uploader_name, uploader_profile,
-and upload_date, with string or null values.
+Run the pipeline directly on the existing test folder; no request JSON needs
+to be entered or created manually::
 
-For local frames, a minimal request is::
+    python -m pipeline
+    python -m pipeline --limit 5
+    python -m pipeline --model-cache /srv/models/etrue
 
-    {
-      "claim": "This video shows a protest in Paris on 2026-01-01.",
-      "keyframes": ["media/frame_01.jpg", "media/frame_02.jpg"]
-    }
-
-Paths in the JSON are relative to that JSON file. Supplied keyframes take
-priority over local video, then video downloaded from post_url. At most four
-frames are analyzed and three used for reverse-image retrieval. Downloaded
-video and extracted frames persist under the result's assets directory::
-
-    python -m pipeline --input request.json --output outputs/verification/result.json
-    python -m pipeline --input request.json --output outputs/verification/result.json --model-cache /srv/models/etrue
-
-The first command writes result.json and generated media in result_assets
-beside it. Supplied media files are only read. Output/work directories inside
-the existing eTRUE or TRUE_Dataset trees are rejected.
+The default dataset folder is data/TRUE_Dataset/test and the default output
+directory is outputs/verification/true_test. The first command processes the
+full test split; --limit 5 selects the first five records for a smoke run.
+Use --dataset to select another test folder or a TRUE_Dataset root.
 
 Python API
 ----------
+
+Single-request verification remains available through verify_claim. Accepted
+top-level fields are claim, video_path, keyframes, post_url, metadata, and
+transcript. A non-empty claim and at least one media input are required.
+Unknown fields, including rating, content and verification, are rejected.
+Metadata accepts title, description, platform, uploader_name, uploader_profile,
+and upload_date, with string or null values.
 
 Paths in Python API requests are relative to the process working directory::
 
@@ -73,19 +66,24 @@ Paths in Python API requests are relative to the process working directory::
         model_cache=Path("/srv/models/etrue"),
     )
 
-Invalid input raises ValueError. Runtime failures return status=error and
-verdict=null. CLI writes an error JSON and exits 1; ok/partial runs exit 0.
+Supplied keyframes take priority over local video, then video downloaded from
+post_url. At most four frames are analyzed and three used for reverse-image
+retrieval. Downloaded video and extracted frames persist under work_dir;
+supplied media files are only read. Output/work directories inside the existing
+eTRUE or TRUE_Dataset trees are rejected. Invalid input raises ValueError.
+Runtime failures return status=error and verdict=null.
 
 TRUE_Dataset test split
 ----------------------
 
 Run the existing test split on the server without creating requests manually::
 
-    python -m pipeline --true-test data/TRUE_Dataset --output-dir outputs/verification/true_test --limit 5
-    python -m pipeline --true-test data/TRUE_Dataset --output-dir outputs/verification/true_test
+    python -m pipeline --dataset data/TRUE_Dataset/test --limit 5
+    python -m pipeline --dataset data/TRUE_Dataset/test
 
 The first command is a five-record smoke run; omit --limit to process the full
-test split. The reader preserves test_set.txt order when present, otherwise
+test split. --dataset also accepts the dataset root, data/TRUE_Dataset.
+The reader preserves test_set.txt order when present, otherwise
 uses sorted test/*.json files. It reads only claim and original video fields,
 never the article URL/content, rating, rationales, evidence or annotations.
 Existing test_output/<ID> frames take priority. Records without frames use
@@ -102,7 +100,7 @@ Output directories inside the source dataset are rejected.
 
 To inspect/prepare inputs without loading Qwen or contacting search services::
 
-    python -m pipeline --true-test data/TRUE_Dataset --output-dir outputs/verification/true_test --prepare-only
+    python -m pipeline --prepare-only
 
 Preparation writes clean requests and a report, without predicted results.
 Run the regular command on the server to perform actual verification.
@@ -112,7 +110,7 @@ The Python batch API is::
     from pipeline import run_true_test
 
     report = run_true_test(
-        Path("data/TRUE_Dataset"),
+        Path("data/TRUE_Dataset/test"),
         output_dir=Path("outputs/verification/true_test"),
         model_cache=Path("data/eTRUE/models"),
         limit=5,
