@@ -116,7 +116,7 @@ class QwenRuntime:
                 top_p=1.0,
                 top_k=40,
                 min_p=0.0,
-                presence_penalty=2.0,
+                # presence_penalty=2.0,
                 repetition_penalty=1.0,
             )
         tokens = output[0][inputs["input_ids"].shape[-1] :]
