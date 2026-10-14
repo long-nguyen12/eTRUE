@@ -45,7 +45,7 @@ def parse_json_output(text):
     candidate = text[start : end + 1]
     try:
         return json.loads(candidate)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as json_error:
         try:
             return json.loads(escape_json_control_characters(candidate))
         except json.JSONDecodeError:
@@ -54,7 +54,11 @@ def parse_json_output(text):
         try:
             return ast.literal_eval(candidate)
         except (ValueError, SyntaxError) as error:
-            raise ValueError("Model output contained invalid structured data") from error
+            raise ValueError(
+                "Model output contained invalid structured data: " + json_error.msg
+                + " (line " + str(json_error.lineno)
+                + ", column " + str(json_error.colno) + ")"
+            ) from error
 
 
 def enum_value(value, allowed):

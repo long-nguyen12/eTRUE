@@ -471,7 +471,8 @@ concerns documented framing, never a creator's psychological intention.
 
 Review EVERY assessment whose current status is supported or refuted, including core.
 Return assessment_reviews keyed by exactly the supplied required_reviews names.
-Each review is {"status":original_status_or_unknown,"explanation":plain_text}.
+Each review uses this JSON shape: {"status":"unknown","explanation":"Short plain prose."}.
+Replace the example status with the original status or unknown according to the evidence.
 Keep the status only if the quoted passages directly establish the asserted fact or an
 incompatible fact about THIS event. Otherwise downgrade it to unknown. Never promote an
 unknown/not_applicable assessment or reverse supported/refuted.
@@ -487,10 +488,14 @@ For overall: False if any component is False, else Unverified if any is Unverifi
 else Misleading if any is Misleading, else True. Never vote across pillars.
 Explain only the reviewed findings, without adding facts or suggesting unknown is false.
 
-Return exactly one JSON object:
-{"verdict":label,"explanation":text,"open_questions":[text],
- "component_verdicts":[{"component_id":id,"verdict":label,"explanation":text,
- "assessment_reviews":{assessment_name:{"status":status,"explanation":text}}}]}.
+Return exactly one JSON object using this valid JSON shape, replacing example values:
+{"verdict":"Unverified","explanation":"Short plain prose.",
+ "open_questions":["Which asserted fact remains unverified?"],
+ "component_verdicts":[{"component_id":"claim_1","verdict":"Unverified",
+ "explanation":"Short plain prose.","assessment_reviews":{}}]}.
+Fill assessment_reviews with all required review names and their review objects.
+Quote every string and key, use JSON literals, and never use trailing commas.
+Keep each explanation to at most two short sentences so the whole JSON can finish.
 Return exactly one component_verdicts entry for EVERY supplied component ID.
 Every explanation and question must be plain prose in the claim's language, without
 Markdown, HTML, JSON, URLs, evidence IDs or citation markers. Python attaches the accepted

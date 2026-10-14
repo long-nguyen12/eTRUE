@@ -17,34 +17,14 @@ from stages.search_clients import (
 from stages.web import wayback_earliest
 from utils.json_ld import _date_value, json_ld_nodes, public_http_url
 from utils.media_metadata import CORE_METADATA_FIELDS, extract_media
+from utils.ytdlp import cookie_file_from_env
 
 FACTCHECK_DOMAINS = {
     "snopes.com",
     "politifact.com",
     "factcheck.org",
     "fullfact.org",
-    "checkyourfact.com",
-    "leadstories.com",
     "factcheck.afp.com",
-    "factcheckni.org",
-    "factly.in",
-    "boomlive.in",
-    "altnews.in",
-    "logicallyfacts.com",
-    "maldita.es",
-    "newtral.es",
-    "chequeado.com",
-    "correctiv.org",
-    "pesacheck.org",
-    "africacheck.org",
-    "factcheck.ge",
-    "factcrescendo.com",
-    "verafiles.org",
-    "verificat.cat",
-    "science.feedback.org",
-    "climatefeedback.org",
-    "healthfeedback.org",
-    "facta.news",
 }
 FACTCHECK_LABEL = re.compile(
     r"\bfact[\s_-]?check(?:ing|ed|er|ers)?\b|\bclaim\s*review\b",
@@ -104,10 +84,6 @@ def _url_key(url):
 
 def _clean(value, maximum=12000):
     return re.sub(r"\s+", " ", str(value or "")).strip()[:maximum]
-
-
-def _now():
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _error(errors, stage, error):
@@ -360,7 +336,8 @@ def collect_evidence(payload, components, media, store, errors):
         if post_page:
             try:
                 extraction = extract_media(
-                    post_page["final_url"], _MetadataSession(post_page)
+                    post_page["final_url"], _MetadataSession(post_page),
+                    cookie_file=cookie_file_from_env(),
                 )
                 metadata = extraction.get("metadata") or {}
                 targets = [

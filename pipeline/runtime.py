@@ -113,7 +113,16 @@ class QwenRuntime:
                 pad_token_id=pad_id if pad_id is not None else eos_id,
             )
         tokens = output[0][inputs["input_ids"].shape[-1] :]
-        return _json_object(decoder.decode(tokens, skip_special_tokens=True))
+        try:
+            return _json_object(decoder.decode(tokens, skip_special_tokens=True))
+        except ValueError as error:
+            eos_ids = eos_id if isinstance(eos_id, (list, tuple)) else [eos_id]
+            if tokens.shape[-1] >= max_new_tokens and int(tokens[-1].item()) not in eos_ids:
+                raise ValueError(
+                    "Model output reached the " + str(max_new_tokens)
+                    + "-token output limit without a valid JSON object: " + str(error)
+                ) from error
+            raise
 
     def generate(self, instructions: str, data: dict, max_new_tokens=1024) -> dict:
         inputs = self._fit_prompt(instructions, data, max_new_tokens)
