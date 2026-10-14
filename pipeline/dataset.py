@@ -27,11 +27,13 @@ VIDEO_EXTENSIONS = {
 def list_test_ids(dataset_root, limit=None):
     root = Path(dataset_root).resolve()
     file_set = root.parent / "test_set.txt"
+    print(f"Loading test set from {file_set}", flush=True)
     items = [
         line.strip()
         for line in file_set.read_text(encoding="utf-8-sig").splitlines()
         if line.strip()
     ]
+    print(f"Found {len(items)} test records in {file_set}", flush=True)
     return items if limit is None else items[:limit]
 
 
