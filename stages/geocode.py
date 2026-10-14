@@ -155,7 +155,6 @@ def geocode(query, session, context=()):
         row, selection = select_geocode_candidate(query, rows, context)
         result = {
             "query": query,
-            "retrieved_at": now(),
             "candidates": rows,
             "result": row,
             "selection": selection,
@@ -163,7 +162,6 @@ def geocode(query, session, context=()):
     except Exception as error:
         result = {
             "query": query,
-            "retrieved_at": now(),
             "result": None,
             "error": str(error),
         }
@@ -286,7 +284,6 @@ def run(records, output):
                 "https://nominatim.openstreetmap.org/ui/search.html?q=" + quote(queries[role]),
                 row.get("display_name"),
                 fields=fields,
-                retrieved_at=result.get("retrieved_at"),
                 role=role,
                 address=row.get("address"),
                 selection=result.get("selection"),

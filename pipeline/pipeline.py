@@ -10,49 +10,23 @@ from .retrieval import collect_evidence
 from .runtime import QwenRuntime
 
 DIMENSIONS = ("subject", "action", "time", "location", "attribution", "context")
-NORMALIZE_PROMPT = """Read the "claim" field of the supplied JSON data and extract its assertions.
-Return exactly one JSON object with the following keys and no additional keys:
-{
-  "normalized_claim": "",
-  "claim_components": [
-    {
-      "text": "",
-      "subject": null,
-      "action": null,
-      "time": null,
-      "location": null,
-      "attribution": null,
-      "context": null
-    }
-  ]
-}
+NORMALIZE_PROMPT = """Extract assertions from the supplied claim. Output only JSON with exactly this shape:
+{"normalized_claim":"","claim_components":[{"text":"","subject":null,"action":null,"time":null,"location":null,"attribution":null,"context":null}]}
 
-Copy the entire input claim into normalized_claim, changing whitespace only.
-Use one or more components. Each text must be an exact contiguous passage from
-normalized_claim. Retain every assertion and its original language, negation,
-modality, quantifiers, uncertainty, attribution, and temporal/causal/conditional
-relationships. Never add outside facts, paraphrase, or resolve an ambiguous claim.
-Split only clauses that can stand independently without changing meaning.
-Keep collective actions together: "A and B met" is one component.
-Keep a linked assertion together if splitting loses its relationship: "The FBI
-was on its way when a fire destroyed the servers" is one complete component.
-Keep that event relationship in the full text and copied action phrase, rather
-than assigning it to context or inventing a calendar time.
+Copy the entire claim into normalized_claim, changing whitespace only. Use one
+or more components covering every assertion; text must be an exact contiguous
+passage. Preserve language, negation, modality, quantifiers, uncertainty,
+attribution and temporal/causal/conditional relations. Split only independently
+meaningful clauses; keep collective actions and linked events together,
+including their relation in text and action.
 
-Every component must contain all seven keys shown above. Dimension values must
-be exact copied phrases from the claim, or null when not explicitly stated:
-- subject: the entity or entities performing or experiencing the action.
-- action: the asserted action or state; preserve its negation and qualifications.
-- time: an explicit calendar date, clock time, or stated period; never infer
-  capture time. An event-only phrase such as "when a fire broke out" stays in
-  text; leave time null unless a date, clock time, or period is also stated.
-- location: an explicitly asserted physical site of the event; do not treat
-  objects such as "servers and hard drives" as geographic location clues.
-- attribution: an explicitly named speaker or source to whom the claim is ascribed.
-- context: explicitly asserted framing or stated purpose, not merely a temporal
-  or causal link between events. Leave null when that framing is absent.
-Do not invent values to fill missing dimensions. Empty strings are invalid.
-End immediately after the JSON object; no Markdown or explanatory text.
+Include all six dimensions as nonempty exact copied phrases or null if unstated.
+subject: actor/experiencer; action: asserted act/state with qualifications;
+time: stated calendar date, clock time or period, never inferred capture time
+or an event-only "when" link; location: stated physical event site, not objects;
+attribution: named speaker/source; context: stated framing/purpose, not event
+relations. Do not paraphrase, add facts or resolve ambiguity. No extra keys,
+Markdown or explanation.
 """
 
 
