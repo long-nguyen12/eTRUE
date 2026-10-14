@@ -43,11 +43,23 @@ def parse_json_output(text):
         raise ValueError("Model output did not close its structured data")
 
     candidate = text[start : end + 1]
+    decoder = json.JSONDecoder()
     try:
         return json.loads(candidate)
     except json.JSONDecodeError as json_error:
         try:
-            return json.loads(escape_json_control_characters(candidate))
+            obj, _ = decoder.raw_decode(candidate)
+            return obj
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            cleaned = escape_json_control_characters(candidate)
+            try:
+                return json.loads(cleaned)
+            except json.JSONDecodeError:
+                obj, _ = decoder.raw_decode(cleaned)
+                return obj
         except json.JSONDecodeError:
             pass
 
