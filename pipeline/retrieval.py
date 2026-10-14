@@ -332,15 +332,7 @@ def collect_evidence(payload, components, media, store, errors):
             return None
         inspected.add(key)
         try:
-            # source_page comes from the orchestrator's preflight, never payload.
-            supplied = (
-                media.get("source_page") if url == payload.get("post_url") else None
-            )
-            page = (
-                supplied
-                if isinstance(supplied, dict) and supplied.get("original_url") == url
-                else inspect_page(session, url)
-            )
+            page = inspect_page(session, url)
         except Exception as error:
             _error(errors, "retrieval.page", error)
             return None

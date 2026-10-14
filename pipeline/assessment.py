@@ -385,6 +385,9 @@ def eligible_verdict(result):
 
 
 def predict_verdict(components, results, store, runtime):
+    for result in results:
+        if set(result["pillar_assessments"]) != set(PILLAR_PROMPTS):
+            raise ValueError("All five pillar results are required before aggregation")
     labels = {r["component_id"]: eligible_verdict(r) for r in results}
     values = list(labels.values())
     overall = (

@@ -49,7 +49,7 @@ def run_pillar(
     )
     if pillar == "provenance":
         instructions += "\nAlso return core_assessment with the same assessment structure, checking the asserted subject/action/event."
-    return runtime.generate(
+    result = runtime.generate(
         instructions,
         {
             "agent": name,
@@ -61,6 +61,15 @@ def run_pillar(
         },
         max_new_tokens=2048,
     )
+    if not isinstance(result, dict):
+        raise ValueError("Pillar agent response must be an object")
+    for key in ("fields", "field_citations", "assessments"):
+        if result.get(key) is not None and not isinstance(result[key], dict):
+            raise ValueError(key + " must be an object")
+    fields = (result.get("fields") or {}).get(pillar)
+    if fields is not None and not isinstance(fields, dict):
+        raise ValueError(pillar + " fields must be an object")
+    return result
 
 
 PILLAR_PROMPTS = {

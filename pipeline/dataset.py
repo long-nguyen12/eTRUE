@@ -8,7 +8,6 @@ from utils.json_ld import public_http_url
 from utils.records import normalize_date, normalize_platform
 
 from .pipeline import validate_payload
-from .retrieval import is_factcheck_text, is_factcheck_url
 
 FRAME_EXTENSIONS = {".jpeg", ".jpg", ".png"}
 VIDEO_EXTENSIONS = {
@@ -52,7 +51,7 @@ def list_test_ids(dataset_root, limit=None):
 
 
 def _safe_text(value):
-    if not isinstance(value, str) or not value.strip() or is_factcheck_text(value):
+    if not isinstance(value, str) or not value.strip():
         return None
     return value.strip()
 
@@ -99,7 +98,7 @@ def load_test_request(dataset_root, claim_id):
             payload["video_path"] = str(video_path.resolve())
 
     post_url = _safe_text(video.get("video_url"))
-    if post_url and public_http_url(post_url) and not is_factcheck_url(post_url):
+    if post_url and public_http_url(post_url):
         payload["post_url"] = post_url
 
     metadata = {}
@@ -116,8 +115,6 @@ def load_test_request(dataset_root, claim_id):
     upload_date = normalize_date(video.get("video_date"))
     if upload_date:
         metadata["upload_date"] = upload_date
-    if is_factcheck_text(" ".join(metadata.values())):
-        metadata = {"upload_date": upload_date} if upload_date else {}
     if metadata:
         payload["metadata"] = metadata
     transcript = _safe_text(video.get("video_transcript"))

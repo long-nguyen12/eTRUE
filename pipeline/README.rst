@@ -93,8 +93,9 @@ uses sorted test/*.json files. It reads only claim and original video fields,
 never the article URL/content, rating, rationales, evidence or annotations.
 Existing test_output/<ID> frames take priority. Records without frames use
 test_video/<ID>.mp4 or a video inside test_video/<ID>, then the video URL.
-Marked fact-check captions/descriptions/transcripts and fact-check video URLs
-are excluded. Supplied original transcripts are reused without ASR.
+Input videos are assumed to come from non-fact-checking sources. Their original
+metadata and supplied transcripts are preserved as unverified input, without ASR.
+Fact-check source filtering applies to retrieved web evidence.
 
 Outputs are requests/<ID>.json, results/<ID>.json, assets/<ID>/ and
 batch_report.json under --output-dir. The report is updated after every record.
@@ -135,6 +136,11 @@ framework or extra models. They and the final aggregator reuse one loaded
 Qwen text model and run sequentially on the GPU. The aggregator receives the
 validated five-agent results and their evidence to produce the component and
 overall verdicts and explanations.
+
+Every claim component triggers all five pillar-agent calls, including pillars
+that return not_applicable. After all components, verdict_agent combines their
+validated results in a separate call. A malformed pillar response is recorded
+as an error without skipping the remaining pillar agents.
 
 Results contain the original/normalized claim, claim_components,
 component_results, overall verdict, explanation, open_questions, citations,

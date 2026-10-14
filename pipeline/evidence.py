@@ -58,6 +58,8 @@ def validate_citations(citations, evidence, *, decisive=False):
     for citation in citations:
         if not isinstance(citation, dict):
             continue
+        if not isinstance(citation.get("evidence_id"), str):
+            continue
         item = by_id.get(citation.get("evidence_id"))
         quote = citation.get("quote")
         if not item or not isinstance(quote, str) or len(quote.strip()) < 8:

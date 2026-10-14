@@ -8,11 +8,7 @@ from utils.files import now
 from .assessment import analyze_component, predict_verdict
 from .evidence import EvidenceStore
 from .media import prepare_media
-from .retrieval import (
-    collect_evidence,
-    inspect_page,
-    is_factcheck_text,
-)
+from .retrieval import collect_evidence
 from .runtime import QwenRuntime
 
 DIMENSIONS = ("subject", "action", "time", "location", "attribution", "context")
@@ -173,33 +169,12 @@ def verify_claim(
         normalized, components = _normalize_claim(runtime, payload["claim"])
         result.update(normalized_claim=normalized, claim_components=components)
         stage = "media"
-        media_payload = dict(payload)
-        source_page = None
-        if payload.get("post_url"):
-            import requests
-
-            with requests.Session() as session:
-                session.headers["User-Agent"] = "eTRUE-independent-verification/1.0"
-                try:
-                    source_page = inspect_page(session, payload["post_url"])
-                except Exception as error:
-                    errors.append(
-                        {"stage": "media.source", "message": str(error)[:500]}
-                    )
-            if source_page is None:
-                errors.append(
-                    {
-                        "stage": "media.source",
-                        "message": "Post page unavailable or excluded; URL media not used",
-                    }
-                )
-                media_payload.pop("post_url", None)
         if (
-            media_payload.get("keyframes")
-            or media_payload.get("video_path")
-            or media_payload.get("post_url")
+            payload.get("keyframes")
+            or payload.get("video_path")
+            or payload.get("post_url")
         ):
-            media = prepare_media(media_payload, work_dir)
+            media = prepare_media(payload, work_dir)
         else:
             media = {
                 "frames": [],
@@ -208,8 +183,6 @@ def verify_claim(
                 "errors": [],
             }
         errors.extend(media["errors"])
-        if source_page:
-            media["source_page"] = source_page
         try:
             media["analysis"] = runtime.analyze_frames(media["frames"])
             if media["frames"]:
@@ -221,25 +194,15 @@ def verify_claim(
                     },
                     ensure_ascii=False,
                 )
-                if is_factcheck_text(observation):
-                    media["analysis"] = {}
-                    media["frames"] = []
-                    errors.append(
-                        {
-                            "stage": "vision",
-                            "message": "Fact-check content in media analysis excluded",
-                        }
-                    )
-                else:
-                    store.add(
-                        "keyframe_analysis",
-                        str(media["frames"][0]),
-                        observation,
-                        method="qwen_vision",
-                        verified=False,
-                        frames=[str(p) for p in media["frames"]],
-                        frame_timestamps=media["frame_timestamps"],
-                    )
+                store.add(
+                    "keyframe_analysis",
+                    str(media["frames"][0]),
+                    observation,
+                    method="qwen_vision",
+                    verified=False,
+                    frames=[str(p) for p in media["frames"]],
+                    frame_timestamps=media["frame_timestamps"],
+                )
         except Exception as error:
             errors.append({"stage": "vision", "message": str(error)[:500]})
             media["analysis"] = {}

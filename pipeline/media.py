@@ -8,10 +8,13 @@ import subprocess
 from pathlib import Path
 
 from stages.vision import evenly_spaced
+from utils.json_ld import public_http_url
 from utils.ytdlp import cookie_file_from_env
 
 
 def _download_video(url, work_dir):
+    if not public_http_url(url):
+        raise ValueError("Video URL must be a public HTTP(S) URL")
     import yt_dlp
 
     options = {
