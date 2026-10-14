@@ -93,12 +93,12 @@ def prepare_media(payload: dict, work_dir: Path) -> dict:
         try:
             video_path = _download_video(payload["post_url"], work_dir)
         except Exception as error:
-            result["errors"].append({"stage": "download", "message": str(error)[:500]})
+            print(f"Error downloading video: {error}")
             return result
     result["video_path"] = str(video_path)
     try:
         frames, timestamps, errors = _sample_frames(video_path, work_dir)
         result.update(frames=frames, frame_timestamps=timestamps, errors=errors)
     except (OSError, subprocess.SubprocessError, ValueError, TypeError) as error:
-        result["errors"].append({"stage": "frames", "message": str(error)[:500]})
+        print(f"Error sampling frames: {error}")
     return result

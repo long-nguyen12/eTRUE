@@ -97,7 +97,7 @@ Input videos are assumed to come from non-fact-checking sources. Their original
 metadata and supplied transcripts are preserved as unverified input, without ASR.
 Fact-check source filtering applies to retrieved web evidence.
 
-Outputs are requests/<ID>.json, results/<ID>.json, assets/<ID>/ and
+Outputs are results/<ID>.json, assets/<ID>/ and
 batch_report.json under --output-dir. The report is updated after every record.
 Every processed record has a result file, including ok, partial and error results.
 Record errors do not stop other records; a CUDA/model setup failure stops the
@@ -152,18 +152,13 @@ Component results are updated only after the entire response passes validation.
 
 Results contain the original/normalized claim, claim_components,
 component_results, overall verdict, explanation, open_questions, citations,
-evidence, evidence_relations, trace, errors, media references and model_calls.
+evidence, evidence_relations, trace, errors and media references.
 Each component keeps the existing verification field structure plus a core
 assessment and pillar assessments. Applicable assessments are supported,
 refuted or unknown; unasserted dimensions are not_applicable. Component text
 quotes an unchanged source clause; inherited subjects live in structured fields.
 Reviewed assessments identify verdict_agent in reviewed_by. Citations retained on
 unknown assessments have unresolved relations, rather than decisive supports/refutes.
-
-model_calls records the agent, component, prompt/output token counts, output limit,
-whether generation hit that limit, and elapsed time. Failed model calls also retain
-the error and raw response when available, including JSON and validation failures.
-Diagnostics are reset per claim even when the loaded model is reused across a batch.
 
 Every explanation field, including overall, component and pillar explanations,
 is a plain prose string: no Markdown, HTML, JSON, URLs or evidence IDs.
@@ -188,9 +183,8 @@ Quote validation checks provenance and extraction constraints; semantic
 relevance/entailment still depends on Qwen and warrants review of the evidence.
 
 Text prompts reserve generated tokens within an 8192-token budget. Whole
-evidence items are selected without truncating the claim. metrics records
-which evidence was sent/omitted per prompt; an oversized non-evidence input
-is an explicit error. Relative dates without reference context and capture
+evidence items are selected without truncating the claim. An oversized non-evidence
+input is an explicit error. Relative dates without reference context and capture
 dates less precise than the claim cannot receive a supported date assessment.
 
 A6000 smoke test
@@ -198,8 +192,7 @@ A6000 smoke test
 
 On the A6000 server, run the CLI on representative actual media and review the
 result JSON. Acceptance requires valid cited decisions, no out-of-memory
-failure, media under the assets directory, and unchanged dataset files. Check
-metrics.elapsed_seconds and the explicit PyTorch peak allocated/reserved
-VRAM fields. These are process allocator measurements, not total GPU usage
-from other processes. The smoke test is not an accuracy benchmark.
+failure, media under the assets directory, and unchanged dataset files.
+Review the evidence and explanations manually. The smoke test is not an
+accuracy benchmark.
 

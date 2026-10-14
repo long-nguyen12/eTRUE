@@ -291,7 +291,6 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
                 )
             assessments[pillar] = validated_assessment
         except (ValueError, RuntimeError) as error:
-            runtime.record_model_error(str(error))
             errors.append({"stage": "pillar:" + pillar, "message": str(error)})
 
     grounded = " ".join(e["observation"] for e in store.items if e.get("verified"))
@@ -576,7 +575,6 @@ or conflicting fact, in the claim's language.
                     if citation not in cited:
                         cited.append(citation)
         except ValueError as error:
-            runtime.record_model_error(str(error))
             if attempt:
                 raise
             data["validation_error"] = str(error)

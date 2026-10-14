@@ -24,41 +24,19 @@ VIDEO_EXTENSIONS = {
 }
 
 
-def _identifier(value):
-    if not isinstance(value, str) or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9_-]*", value
-    ):
-        raise ValueError("Test identifiers must be safe filenames")
-    return value
-
-
 def list_test_ids(dataset_root, limit=None):
     root = Path(dataset_root).resolve()
-    manifest = root / "test_set.txt"
-    if manifest.is_file():
-        identifiers = [
-            line.strip()
-            for line in manifest.read_text(encoding="utf-8-sig").splitlines()
-            if line.strip()
-        ]
-    else:
-        identifiers = [path.stem for path in sorted(root.glob("*.json"))]
-    seen = set()
-    for identifier in identifiers:
-        _identifier(identifier)
-        seen.add(identifier.casefold())
-    return identifiers if limit is None else identifiers[:limit]
+    file_set = root / "test_set.txt"
+    items = [
+        line.strip()
+        for line in file_set.read_text(encoding="utf-8-sig").splitlines()
+        if line.strip()
+    ]
+    return items if limit is None else items[:limit]
 
 
-def _safe_text(value):
-    if not isinstance(value, str) or not value.strip():
-        return None
-    return value.strip()
-
-
-def load_test_request(dataset_root, claim_id):
+def load_record(dataset_root, claim_id):
     root = Path(dataset_root).resolve()
-    claim_id = _identifier(claim_id)
     with (root / (claim_id + ".json")).open(encoding="utf-8-sig") as handle:
         data = json.load(handle)
     video = data.get("video_information") or {}
@@ -82,22 +60,10 @@ def load_test_request(dataset_root, claim_id):
         payload["keyframes"] = [str(path.resolve()) for path in frames]
     else:
         video_path = root.parent / "test_video" / (claim_id + ".mp4")
-        if not video_path.is_file():
-            video_dir = root.parent / "test_video" / claim_id
-            videos = (
-                sorted(
-                    path
-                    for path in video_dir.iterdir()
-                    if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
-                )
-                if video_dir.is_dir()
-                else []
-            )
-            video_path = videos[0] if videos else None
         if video_path:
             payload["video_path"] = str(video_path.resolve())
 
-    post_url = _safe_text(video.get("video_url"))
+    post_url = video.get("video_url")
     if post_url and public_http_url(post_url):
         payload["post_url"] = post_url
 
@@ -107,7 +73,7 @@ def load_test_request(dataset_root, claim_id):
         ("video_description", "description"),
         ("platform", "platform"),
     ):
-        value = _safe_text(video.get(source_field))
+        value = video.get(source_field)
         if value:
             metadata[target_field] = (
                 normalize_platform(value) if target_field == "platform" else value
@@ -117,7 +83,7 @@ def load_test_request(dataset_root, claim_id):
         metadata["upload_date"] = upload_date
     if metadata:
         payload["metadata"] = metadata
-    transcript = _safe_text(video.get("video_transcript"))
+    transcript = video.get("video_transcript")
     if transcript:
         payload["transcript"] = transcript
     return validate_payload(payload)

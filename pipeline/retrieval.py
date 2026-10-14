@@ -317,7 +317,6 @@ def collect_evidence(payload, components, media, store, errors):
     vision_key = os.environ.get("GOOGLE_CLOUD_VISION_API_KEY")
     session = requests.Session()
     session.headers["User-Agent"] = "eTRUE-verification/1.0"
-    retrieved_at = _now()
     pages = {}
     inspected = set()
     archive_urls = []
@@ -347,7 +346,6 @@ def collect_evidence(payload, components, media, store, errors):
                 source,
                 page["body"] or page["description"] or page["title"],
                 method="http",
-                retrieved_at=retrieved_at,
                 published_at=page["published_at"],
                 verified=True,
                 title=page["title"],
@@ -391,7 +389,6 @@ def collect_evidence(payload, components, media, store, errors):
                         post_page["source"],
                         json.dumps(safe_metadata, ensure_ascii=False),
                         method="platform_metadata",
-                        retrieved_at=retrieved_at,
                         verified=True,
                         metadata=safe_metadata,
                         field_sources=extraction.get("field_sources") or {},
@@ -429,7 +426,6 @@ def collect_evidence(payload, components, media, store, errors):
                         page["source"],
                         observation,
                         method="brave" if brave_key else "ddgs",
-                        retrieved_at=retrieved_at,
                         verified=False,
                         query=query,
                         rank=item.get("rank"),
@@ -453,7 +449,6 @@ def collect_evidence(payload, components, media, store, errors):
                             _clean(item.get("title"), 1000)
                             or "Page containing an image similar to a supplied keyframe.",
                             method="google_vision",
-                            retrieved_at=retrieved_at,
                             verified=False,
                             matched_frames=item.get("matched_frames") or [],
                             match_types=item.get("match_types") or [],
@@ -490,7 +485,6 @@ def collect_evidence(payload, components, media, store, errors):
                         + archive["date"]
                         + "; this is an online availability date, not a capture date.",
                         method="wayback",
-                        retrieved_at=retrieved_at,
                         verified=True,
                         archive=archive,
                     )

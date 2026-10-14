@@ -1,5 +1,3 @@
-"""Plain prose for explanations; citations remain in their separate fields."""
-
 import json
 import re
 

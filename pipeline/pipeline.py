@@ -1,7 +1,4 @@
-"""Request-scoped orchestration, independent of enrichment and annotation."""
-
 import json
-from copy import deepcopy
 from pathlib import Path
 
 from utils.files import now
@@ -160,7 +157,6 @@ def verify_claim(
         "trace": [],
         "status": "error",
         "errors": [],
-        "model_calls": [],
         "started_at": now(),
     }
     errors = result["errors"]
@@ -171,8 +167,6 @@ def verify_claim(
         if runtime is None:
             runtime = QwenRuntime(Path(model_cache))
         runtime.last_evidence_ids = []
-        runtime.omitted_evidence_ids = []
-        runtime.model_calls = []
         runtime.load_text()
         stage = "normalize"
         normalized, components = _normalize_claim(runtime, payload["claim"])
@@ -218,7 +212,6 @@ def verify_claim(
                     frame_timestamps=media["frame_timestamps"],
                 )
         except Exception as error:
-            runtime.record_model_error(str(error))
             errors.append({"stage": "vision", "message": str(error)[:500]})
             media["analysis"] = {}
         for kind, observation in (
@@ -253,8 +246,6 @@ def verify_claim(
         )
         result["status"] = "partial" if errors else "ok"
     except Exception as error:
-        if stage == "normalize" and runtime is not None:
-            runtime.record_model_error(str(error))
         errors.append({"stage": stage, "message": str(error)[:500]})
     finally:
         if owns_runtime and runtime is not None:
@@ -264,8 +255,6 @@ def verify_claim(
                 errors.append({"stage": "cleanup", "message": str(error)[:500]})
                 result["status"] = "error"
         result["evidence"] = store.items
-        if runtime is not None:
-            result["model_calls"] = deepcopy(runtime.model_calls)
         result["evidence_relations"], result["trace"] = _relations(
             result["component_results"]
         )
