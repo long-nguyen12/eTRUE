@@ -1,6 +1,7 @@
 """Request-scoped orchestration, independent of enrichment and annotation."""
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 from utils.files import now
@@ -107,7 +108,9 @@ def _relations(results):
                         {
                             "component_id": result["component_id"],
                             "pillar": pillar,
-                            "stance": stance,
+                            "stance": (
+                                "unresolved" if assessment["status"] == "unknown" else stance
+                            ),
                             **citation,
                         }
                     )
@@ -116,6 +119,10 @@ def _relations(results):
                     "component_id": result["component_id"],
                     "pillar": pillar,
                     "agent": assessment.get("agent"),
+                    **(
+                        {"reviewed_by": assessment["reviewed_by"]}
+                        if "reviewed_by" in assessment else {}
+                    ),
                     "status": assessment["status"],
                     "conclusion": assessment["explanation"],
                     "evidence_ids": list(
@@ -153,6 +160,7 @@ def verify_claim(
         "trace": [],
         "status": "error",
         "errors": [],
+        "model_calls": [],
         "started_at": now(),
     }
     errors = result["errors"]
@@ -164,6 +172,7 @@ def verify_claim(
             runtime = QwenRuntime(Path(model_cache))
         runtime.last_evidence_ids = []
         runtime.omitted_evidence_ids = []
+        runtime.model_calls = []
         runtime.load_text()
         stage = "normalize"
         normalized, components = _normalize_claim(runtime, payload["claim"])
@@ -183,6 +192,11 @@ def verify_claim(
                 "errors": [],
             }
         errors.extend(media["errors"])
+        result["media"] = {
+            "frames": [str(p) for p in media["frames"]],
+            "video_path": media["video_path"],
+            "frame_timestamps": media["frame_timestamps"],
+        }
         try:
             media["analysis"] = runtime.analyze_frames(media["frames"])
             if media["frames"]:
@@ -204,6 +218,7 @@ def verify_claim(
                     frame_timestamps=media["frame_timestamps"],
                 )
         except Exception as error:
+            runtime.record_model_error(str(error))
             errors.append({"stage": "vision", "message": str(error)[:500]})
             media["analysis"] = {}
         for kind, observation in (
@@ -237,12 +252,9 @@ def verify_claim(
             predict_verdict(components, result["component_results"], store, runtime)
         )
         result["status"] = "partial" if errors else "ok"
-        result["media"] = {
-            "frames": [str(p) for p in media["frames"]],
-            "video_path": media["video_path"],
-            "frame_timestamps": media["frame_timestamps"],
-        }
     except Exception as error:
+        if stage == "normalize" and runtime is not None:
+            runtime.record_model_error(str(error))
         errors.append({"stage": stage, "message": str(error)[:500]})
     finally:
         if owns_runtime and runtime is not None:
@@ -252,6 +264,8 @@ def verify_claim(
                 errors.append({"stage": "cleanup", "message": str(error)[:500]})
                 result["status"] = "error"
         result["evidence"] = store.items
+        if runtime is not None:
+            result["model_calls"] = deepcopy(runtime.model_calls)
         result["evidence_relations"], result["trace"] = _relations(
             result["component_results"]
         )

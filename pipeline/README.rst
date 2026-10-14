@@ -99,6 +99,7 @@ Fact-check source filtering applies to retrieved web evidence.
 
 Outputs are requests/<ID>.json, results/<ID>.json, assets/<ID>/ and
 batch_report.json under --output-dir. The report is updated after every record.
+Every processed record has a result file, including ok, partial and error results.
 Record errors do not stop other records; a CUDA/model setup failure stops the
 batch immediately and leaves remaining records unprocessed. Run summaries
 report processed counts and verdict counts, not accuracy or gold labels.
@@ -142,13 +143,27 @@ that return not_applicable. After all components, verdict_agent combines their
 validated results in a separate call. A malformed pillar response is recorded
 as an error without skipping the remaining pillar agents.
 
+The aggregator receives compact findings and their accepted quotes, reviews every
+supported/refuted assessment, and may retain it or downgrade it to unknown. It cannot
+promote an unknown assessment or reverse a finding. Python recomputes the verdicts
+and attaches the accepted citations without asking the model to copy them again.
+Invalid aggregation output gets one correction attempt with validation feedback.
+Component results are updated only after the entire response passes validation.
+
 Results contain the original/normalized claim, claim_components,
 component_results, overall verdict, explanation, open_questions, citations,
-evidence, evidence_relations, trace, errors, media references and metrics.
+evidence, evidence_relations, trace, errors, media references and model_calls.
 Each component keeps the existing verification field structure plus a core
 assessment and pillar assessments. Applicable assessments are supported,
 refuted or unknown; unasserted dimensions are not_applicable. Component text
 quotes an unchanged source clause; inherited subjects live in structured fields.
+Reviewed assessments identify verdict_agent in reviewed_by. Citations retained on
+unknown assessments have unresolved relations, rather than decisive supports/refutes.
+
+model_calls records the agent, component, prompt/output token counts, output limit,
+whether generation hit that limit, and elapsed time. Failed model calls also retain
+the error and raw response when available, including JSON and validation failures.
+Diagnostics are reset per claim even when the loaded model is reused across a batch.
 
 Every explanation field, including overall, component and pillar explanations,
 is a plain prose string: no Markdown, HTML, JSON, URLs or evidence IDs.

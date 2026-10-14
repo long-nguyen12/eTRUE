@@ -4,6 +4,7 @@ import copy
 import gc
 import json
 from pathlib import Path
+from time import perf_counter
 
 import torch
 from transformers import AutoModelForMultimodalLM, AutoTokenizer
@@ -32,6 +33,8 @@ class QwenRuntime:
         self.model_id = None
         self.last_evidence_ids = []
         self.omitted_evidence_ids = []
+        self.model_calls = []
+        self._last_response = None
         if not torch.cuda.is_available():
             raise RuntimeError("QwenRuntime requires CUDA on cuda:0")
         self.device = "cuda:0"
@@ -107,6 +110,8 @@ class QwenRuntime:
             evidence.pop()
 
     def _generate(self, inputs, decoder, max_new_tokens):
+        call = self.model_calls[-1]
+        call["prompt_tokens"] = int(inputs["input_ids"].shape[-1])
         inputs = inputs.to(self.device)
         tokenizer = decoder.tokenizer if hasattr(decoder, "tokenizer") else decoder
         eos_id = tokenizer.eos_token_id
@@ -119,14 +124,62 @@ class QwenRuntime:
                 eos_token_id=eos_id,
                 pad_token_id=pad_id if pad_id is not None else eos_id,
             )
-        generated = decoder.decode(
-            output[0][inputs["input_ids"].shape[-1] :], skip_special_tokens=True
+        tokens = output[0][inputs["input_ids"].shape[-1] :]
+        call["generated_tokens"] = int(tokens.shape[-1])
+        eos_ids = eos_id if isinstance(eos_id, (list, tuple)) else [eos_id]
+        ended_at_eos = bool(tokens.shape[-1]) and int(tokens[-1].item()) in eos_ids
+        call["hit_token_limit"] = (
+            call["generated_tokens"] >= max_new_tokens and not ended_at_eos
         )
-        return _json_object(generated)
+        self._last_response = decoder.decode(tokens, skip_special_tokens=True)
+        try:
+            return _json_object(self._last_response)
+        except Exception as error:
+            self.record_model_error(str(error), error_type="parse")
+            raise
+
+    def _start_model_call(self, agent, component_id, max_new_tokens):
+        self._last_response = None
+        call = {
+            "agent": agent,
+            "component_id": component_id,
+            "prompt_tokens": None,
+            "generated_tokens": None,
+            "max_new_tokens": max_new_tokens,
+            "hit_token_limit": False,
+            "elapsed_seconds": None,
+        }
+        self.model_calls.append(call)
+        return call
+
+    def record_model_error(self, message, *, error_type="validation"):
+        if not self.model_calls:
+            return
+        call = self.model_calls[-1]
+        if "error" in call:
+            return
+        call["error"] = str(message)
+        call["error_type"] = error_type
+        if self._last_response is not None:
+            call["raw_response"] = self._last_response
 
     def generate(self, instructions: str, data: dict, max_new_tokens=1024) -> dict:
-        inputs = self._fit_prompt(instructions, data, max_new_tokens)
-        return self._generate(inputs, self.tokenizer, max_new_tokens)
+        component = data.get("component") or {}
+        call = self._start_model_call(
+            data.get("agent") or ("normalize" if "claim" in data else "text"),
+            data.get("component_id") or component.get("id"),
+            max_new_tokens,
+        )
+        started = perf_counter()
+        try:
+            inputs = self._fit_prompt(instructions, data, max_new_tokens)
+            return self._generate(inputs, self.tokenizer, max_new_tokens)
+        except Exception as error:
+            if "error" not in call:
+                self.record_model_error(str(error), error_type="generation")
+            raise
+        finally:
+            call["elapsed_seconds"] = round(perf_counter() - started, 6)
 
     def analyze_frames(self, frames: list[Path]) -> dict:
         selected = evenly_spaced(list(frames), 4)
@@ -138,6 +191,8 @@ class QwenRuntime:
             }
         images = []
         inputs = None
+        call = self._start_model_call("vision", None, 512)
+        started = perf_counter()
         try:
             from PIL import Image
             from transformers import AutoProcessor
@@ -162,6 +217,7 @@ class QwenRuntime:
                 return_dict=True,
                 return_tensors="pt",
             )
+            call["prompt_tokens"] = int(inputs["input_ids"].shape[-1])
             if inputs["input_ids"].shape[-1] + 512 > CONTEXT_TOKENS:
                 raise ValueError("Vision input exceeds the 8192-token budget")
             analysis = normalize_vision_analysis(
@@ -173,7 +229,12 @@ class QwenRuntime:
                 "frames": [str(frame) for frame in selected],
                 "model": MODELS["vision"],
             }
+        except Exception as error:
+            if "error" not in call:
+                self.record_model_error(str(error), error_type="generation")
+            raise
         finally:
+            call["elapsed_seconds"] = round(perf_counter() - started, 6)
             inputs = None
             for image in images:
                 image.close()

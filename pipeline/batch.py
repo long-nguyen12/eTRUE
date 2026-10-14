@@ -65,9 +65,8 @@ def run_true_test(
                     "verdict": None,
                     "errors": [{"stage": "input", "message": str(error)}],
                 }
-            if result["status"] == "error":
-                result["claim_id"] = identifier
-                write_json(result_file, result)
+            result["claim_id"] = identifier
+            write_json(result_file, result)
             status_counts[result["status"]] += 1
             if result.get("verdict"):
                 verdict_counts[result["verdict"]] += 1
@@ -77,9 +76,7 @@ def run_true_test(
                     "status": result["status"],
                     "verdict": result.get("verdict"),
                     "request_file": str(request_file) if request_written else None,
-                    "result_file": (
-                        str(result_file) if result["status"] == "error" else None
-                    ),
+                    "result_file": str(result_file),
                     "errors": result.get("errors", []),
                 }
             )
@@ -119,3 +116,4 @@ def run_true_test(
         finished_at=now(), elapsed_seconds=round(time.perf_counter() - started, 3)
     )
     write_json(output_dir / "batch_report.json", report)
+    return report
