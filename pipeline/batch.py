@@ -32,23 +32,23 @@ def run_true_test(
     except Exception as error:
         print(f"Failed to initialize QwenRuntime: {error}", flush=True)
     for index, record in enumerate(items, 1):
-        result_file = output_dir / "results" / (record["id"] + ".json")
+        result_file = output_dir / "results" / (record + ".json")
         try:
-            payload = load_record(dataset_root, record["id"])
+            payload = load_record(dataset_root, record)
             result = verify_claim(
                 payload,
-                work_dir=output_dir / "assets" / record["id"],
+                work_dir=output_dir / "assets" / record,
                 model_cache=Path(model_cache),
                 runtime=runtime,
             )
         except (OSError, ValueError) as error:
-            print(f"Error processing record {record['id']}: {error}", flush=True)
+            print(f"Error processing record {record}: {error}", flush=True)
             
-        result["claim_id"] = record["id"]
+        result["claim_id"] = record
         write_json(result_file, result)
         report["records"].append(
             {
-                "claim_id": record["id"],
+                "claim_id": record,
                 "status": result["status"],
                 "verdict": result.get("verdict"),
                 "result_file": str(result_file),
@@ -63,7 +63,7 @@ def run_true_test(
             "[{0}/{1}] {2}: {3}, verdict={4}".format(
                 index,
                 len(items),
-                record["id"],
+                record,
                 result["status"],
                 result.get("verdict"),
             ),
