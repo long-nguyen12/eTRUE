@@ -10,24 +10,8 @@ from .retrieval import collect_evidence
 from .runtime import QwenRuntime
 
 DIMENSIONS = ("subject", "action", "time", "location", "attribution", "context")
-NORMALIZE_PROMPT = """Decompose the input claim into independent atomic propositions.
-
-CONSTRAINTS:
-1. Never add outside facts. Keep the exact language of the original claim.
-2. Copy the original claim into "normalized_claim", altering only whitespace or punctuation.
-3. Each component "text" must be an exact, contiguous substring of the "normalized_claim".
-4. Never move a negation between clauses.
-5. Missing dimensions must be strictly null. Do not infer dates, locations, or actions.
-
-HANDLING MULTIPLE SUBJECTS:
-If a contiguous clause contains multiple subjects (e.g., "A and B did X"), create a separate JSON object for each subject. Keep the "text" field identical for both objects, but specify the individual subject in the "subject" field to make the propositions independent.
-
-OUTPUT FORMAT:
-You must output ONLY a raw JSON object.
-Do NOT wrap the output in markdown code blocks (do not use ```json).
-Do NOT include any conversational text, explanations, or hidden thoughts.
-
-REQUIRED JSON SKELETON:
+NORMALIZE_PROMPT = """Read the "claim" field of the supplied JSON data and extract its assertions.
+Return exactly one JSON object with the following keys and no additional keys:
 {
   "normalized_claim": "",
   "claim_components": [
@@ -42,10 +26,33 @@ REQUIRED JSON SKELETON:
     }
   ]
 }
-Instructions for Skeleton: Replace the empty strings with extracted phrases. Leave as null if a dimension is not explicitly present in the text. Duplicate the component object in the array as many times as necessary to capture all propositions.
 
-INPUT CLAIM:
-[INSERT CLAIM HERE]
+Copy the entire input claim into normalized_claim, changing whitespace only.
+Use one or more components. Each text must be an exact contiguous passage from
+normalized_claim. Retain every assertion and its original language, negation,
+modality, quantifiers, uncertainty, attribution, and temporal/causal/conditional
+relationships. Never add outside facts, paraphrase, or resolve an ambiguous claim.
+Split only clauses that can stand independently without changing meaning.
+Keep collective actions together: "A and B met" is one component.
+Keep a linked assertion together if splitting loses its relationship: "The FBI
+was on its way when a fire destroyed the servers" is one complete component.
+Keep that event relationship in the full text and copied action phrase, rather
+than assigning it to context or inventing a calendar time.
+
+Every component must contain all seven keys shown above. Dimension values must
+be exact copied phrases from the claim, or null when not explicitly stated:
+- subject: the entity or entities performing or experiencing the action.
+- action: the asserted action or state; preserve its negation and qualifications.
+- time: an explicit calendar date, clock time, or stated period; never infer
+  capture time. An event-only phrase such as "when a fire broke out" stays in
+  text; leave time null unless a date, clock time, or period is also stated.
+- location: an explicitly asserted physical site of the event; do not treat
+  objects such as "servers and hard drives" as geographic location clues.
+- attribution: an explicitly named speaker or source to whom the claim is ascribed.
+- context: explicitly asserted framing or stated purpose, not merely a temporal
+  or causal link between events. Leave null when that framing is absent.
+Do not invent values to fill missing dimensions. Empty strings are invalid.
+End immediately after the JSON object; no Markdown or explanatory text.
 """
 
 
@@ -75,18 +82,38 @@ def validate_payload(payload, base_dir=None):
 
 def _normalize_claim(runtime, claim):
     raw = runtime.generate(NORMALIZE_PROMPT, {"claim": claim}, max_new_tokens=2048)
+    if not isinstance(raw, dict) or set(raw) != {"normalized_claim", "claim_components"}:
+        raise ValueError("Claim normalization must contain normalized_claim and claim_components")
     normalized = raw.get("normalized_claim")
     components = raw.get("claim_components")
+    expected = " ".join(claim.split())
+    if not isinstance(normalized, str) or " ".join(normalized.split()) != expected:
+        raise ValueError("normalized_claim must preserve the claim exactly apart from whitespace")
+    normalized = expected
+    if not isinstance(components, list) or not components:
+        raise ValueError("claim_components must be a nonempty list")
     output = []
     for index, component in enumerate(components, 1):
-        text = component["text"].strip()
+        if not isinstance(component, dict) or set(component) != {"text", *DIMENSIONS}:
+            raise ValueError("Each claim component must contain text and all six dimensions")
+        text = component["text"]
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("Claim component text must be a nonempty string")
+        text = " ".join(text.split())
+        if text not in normalized:
+            raise ValueError("Claim component text must be an exact passage from normalized_claim")
         row = {"id": "claim_" + str(index), "text": text}
         for dimension in DIMENSIONS:
-            value = component.get(dimension)
+            value = component[dimension]
+            if value is not None:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError("Claim dimension " + dimension + " must be a nonempty string or null")
+                value = " ".join(value.split())
+                if value not in normalized:
+                    raise ValueError("Claim dimension " + dimension + " must be copied from the claim")
             row[dimension] = value
-
         output.append(row)
-    return normalized.strip(), output
+    return normalized, output
 
 
 def _relations(results):

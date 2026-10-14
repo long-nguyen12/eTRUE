@@ -132,6 +132,17 @@ evidence store; no pillar agent receives another agent's conclusions. The
 Provenance agent also assesses the core event. Existing pillar rules and quote
 validators check each agent's output before synthesis.
 
+Normalization preserves the original claim apart from whitespace. Component text
+and dimensions copy source phrases; collective actions and linked assertions stay
+together when splitting would change their meaning. Empty or malformed components
+are technical errors rather than silently omitted claims.
+
+Each pillar returns a complete JSON object with fields, field_citations and
+assessments, all keyed by its own pillar name. Provenance also returns a separate
+core_assessment. The example contains every defined field; invalid keys, types or
+assessment structures are rejected before field extraction. Missing observations
+remain null or [], while unsupported findings become unknown.
+
 The agents are logical roles within the local pipeline, without an agent
 framework or extra models. They and the final aggregator reuse one loaded
 Qwen text model and run sequentially on the GPU. The aggregator receives the
@@ -147,7 +158,10 @@ The aggregator receives compact findings and their accepted quotes, reviews ever
 supported/refuted assessment, and may retain it or downgrade it to unknown. It cannot
 promote an unknown assessment or reverse a finding. Python recomputes the verdicts
 and attaches the accepted citations without asking the model to copy them again.
-Invalid aggregation output gets one correction attempt with validation feedback.
+The response template contains the actual component IDs and required reviews.
+Missing, duplicate or extra IDs/reviews, status reversals and label disagreement
+are technical errors. Invalid JSON and validation errors propagate without masking
+the original failure.
 Component results are updated only after the entire response passes validation.
 
 Results contain the original/normalized claim, claim_components,
@@ -176,6 +190,12 @@ observations are candidates. Decisive assertions need acquired relevant pages
 and exact quotes; geocoding only normalizes an independently grounded place.
 Both supporting and refuting evidence survive unresolved conflicts.
 
+Uploader observations may come from fetched platform metadata. Original creator,
+media provenance, capture/event date, verified location and original context need
+retrieved-page evidence. Upload dates use platform metadata; earliest online dates
+use archive records. Only text in evidence.observation is quotable; a published_at
+value stored outside that observation cannot be used as an invented quote.
+
 Known fact-check domains, redirects/canonical URLs, ClaimReview markup and
 visible fact-check/rating signals are excluded before evidence reaches prompts.
 Screening is heuristic: unidentified mirrors can still escape detection.
@@ -186,6 +206,11 @@ Text prompts reserve generated tokens within an 8192-token budget. Whole
 evidence items are selected without truncating the claim. An oversized non-evidence
 input is an explicit error. Relative dates without reference context and capture
 dates less precise than the claim cannot receive a supported date assessment.
+Normalization and pillar calls reserve 2048 output tokens. Vision reserves 512 and
+returns seven observation fields with short literal OCR/clues. Aggregation reserves
+2048 to 4096 tokens according to the number of components and required reviews,
+within the same 8192-token total context. Required aggregation quotes are not removed
+to make the packet fit; an oversized packet fails explicitly.
 
 A6000 smoke test
 ----------------

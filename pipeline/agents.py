@@ -8,6 +8,8 @@ from pillars.provenance import PROVENANCE_STATUSES
 from pillars.source import SOURCE_TYPES
 from utils.schema import empty_verification
 
+from .text import plain_explanation
+
 ENUMS = {
     "provenance": {"provenance_status": PROVENANCE_STATUSES},
     "source": {"source_type": SOURCE_TYPES},
@@ -27,7 +29,23 @@ def run_pillar(
     runtime, pillar, *, rules, component, applicable, claimed_fields, media, evidence
 ):
     name = pillar + "_agent"
-    schema = {pillar: empty_verification()[pillar]}
+    defaults = empty_verification()[pillar]
+    assessment = {
+        "status": "unknown" if applicable else "not_applicable",
+        "explanation": "Insufficient independently grounded evidence."
+        if applicable else "The claim does not assert this dimension.",
+        "supporting_citations": [],
+        "refuting_citations": [],
+    }
+    example = {
+        "fields": {pillar: defaults},
+        "field_citations": {},
+        "assessments": {pillar: assessment},
+    }
+    if pillar == "provenance":
+        example["core_assessment"] = deepcopy(assessment)
+        example["core_assessment"]["status"] = "unknown"
+        example["core_assessment"]["explanation"] = "Insufficient independently grounded evidence."
     allowed = {field: sorted(values) for field, values in ENUMS[pillar].items()}
     instructions = (
         rules
@@ -38,17 +56,27 @@ def run_pillar(
         + "\nAssess only the "
         + pillar
         + " pillar independently. Other agents' conclusions are not evidence."
+        + " Derive any prerequisite from the supplied raw evidence yourself."
+        + " Media paths are references, not images you can inspect; use only provided vision observations."
         + "\nReturn fields and assessments keyed ONLY by '"
         + pillar
         + "'."
-        + "\nUse not_applicable when this dimension is not asserted; never treat missing evidence as support."
-        + "\nExtract fields using this schema:\n"
-        + json.dumps(schema)
+        + "\nUse not_applicable exactly when applicable_pillars is false; otherwise use supported, refuted or unknown."
+        + " Missing evidence is unknown, not support or refutation. Keep unknown facts null and absent lists []."
+        + " Return every field shown in the example; do not add fields or other pillar keys."
+        + "\nfield_citations maps each non-null observed field's exact 'pillar.field' path to"
+        + ' [{"evidence_id":"ev-...","quote":"exact excerpt from observation"}].'
+        + " Do not cite claimed fields copied from the component. Lists need citations when nonempty."
+        + " Only text inside evidence.observation is quotable; published_at or other metadata outside it is not."
+        + " supported/refuted requires a directly relevant quote in the corresponding citation list."
+        + " Keep explanations to one or two short prose sentences; IDs, URLs and quotations belong in citation fields."
+        + "\nReturn exactly this complete JSON structure with grounded values replacing defaults:\n"
+        + json.dumps(example)
         + "\nAllowed categorical values:\n"
         + json.dumps(allowed)
     )
     if pillar == "provenance":
-        instructions += "\nAlso return core_assessment with the same assessment structure, checking the asserted subject/action/event."
+        instructions += "\ncore_assessment is always applicable and checks the asserted subject/action/event, separately from media provenance."
     result = runtime.generate(
         instructions,
         {
@@ -63,99 +91,141 @@ def run_pillar(
     )
     if not isinstance(result, dict):
         raise ValueError("Pillar agent response must be an object")
+    if set(result) != set(example):
+        raise ValueError("Pillar agent response must contain exactly " + ", ".join(example))
     for key in ("fields", "field_citations", "assessments"):
-        if result.get(key) is not None and not isinstance(result[key], dict):
+        if not isinstance(result[key], dict):
             raise ValueError(key + " must be an object")
-    fields = (result.get("fields") or {}).get(pillar)
-    if fields is not None and not isinstance(fields, dict):
-        raise ValueError(pillar + " fields must be an object")
+    if set(result["fields"]) != {pillar} or set(result["assessments"]) != {pillar}:
+        raise ValueError("fields and assessments must contain only " + pillar)
+    fields = result["fields"][pillar]
+    if not isinstance(fields, dict) or set(fields) != set(defaults):
+        raise ValueError(pillar + " fields must contain every defined field and no others")
+    for field, value in fields.items():
+        if field == "verified_coordinates" and value is not None:
+            raise ValueError("verified_coordinates must remain null for geocoding")
+        if value is None:
+            if isinstance(defaults[field], list):
+                raise ValueError(pillar + "." + field + " must be a list")
+            continue
+        if isinstance(defaults[field], list):
+            valid = isinstance(value, list) and all(isinstance(v, (str, dict)) for v in value)
+        elif field in {"provenance_mismatch", "source_is_uploader", "source_mismatch"}:
+            valid = isinstance(value, bool)
+        else:
+            valid = isinstance(value, str)
+        if not valid:
+            raise ValueError(pillar + "." + field + " has an invalid type")
+    for path, citations in result["field_citations"].items():
+        if path not in {pillar + "." + field for field in defaults}:
+            raise ValueError("Unknown field citation path: " + str(path))
+        _validate_citation_shape(citations)
+    _validate_assessment(result["assessments"][pillar], applicable)
+    if pillar == "provenance":
+        _validate_assessment(result["core_assessment"], True)
     return result
+
+
+def _validate_citation_shape(citations):
+    if not isinstance(citations, list):
+        raise ValueError("Citations must be a list")
+    for citation in citations:
+        if not isinstance(citation, dict) or set(citation) != {"evidence_id", "quote"}:
+            raise ValueError("Each citation requires evidence_id and quote")
+        if any(not isinstance(value, str) or not value.strip() for value in citation.values()):
+            raise ValueError("Citation evidence_id and quote must be nonempty strings")
+
+
+def _validate_assessment(assessment, applicable):
+    keys = {"status", "explanation", "supporting_citations", "refuting_citations"}
+    if not isinstance(assessment, dict) or set(assessment) != keys:
+        raise ValueError("Assessment requires status, explanation and both citation lists")
+    statuses = {"supported", "refuted", "unknown"} if applicable else {"not_applicable"}
+    if not isinstance(assessment["status"], str) or assessment["status"] not in statuses:
+        raise ValueError("Invalid assessment status for pillar applicability")
+    assessment["explanation"] = plain_explanation(assessment["explanation"])
+    for key in ("supporting_citations", "refuting_citations"):
+        _validate_citation_shape(assessment[key])
 
 
 PILLAR_PROMPTS = {
     "provenance": (
-        "Identify footage history, earlier versions, reuse and context; verify that the supplied media depicts the asserted event.\n"
-        "WORKFLOW:\n"
-        "1. Check near_duplicate_matches and image_candidate evidence for visually matching pages. Use match_types (full/partial) and clip_similarity scores when available.\n"
-        "2. Compare published_at dates across duplicate evidence to identify the earliest_known_url and earliest_known_date.\n"
-        "3. Determine provenance_status: original (no earlier version found), earlier version found (same content predates claim), "
-        "repost (verbatim re-upload), edited excerpt (cropped/cut version), compilation (combined with other footage), "
-        "screen recording (recorded from another screen), or unknown.\n"
-        "4. If an earlier version exists, extract previous_context_summary from its page title/description.\n"
-        "5. Set provenance_mismatch=true only if the earlier context contradicts the claim's event, date, location, source, or framing.\n"
-        "CONSTRAINTS:\n"
-        "- An archive/wayback date is an online availability date, not a capture date.\n"
-        "- A search_candidate is not independently verified; only retrieved_page evidence is decisive.\n"
-        "- Do not mark provenance_mismatch based on missing evidence alone."
+        "Establish the supplied video's documented history and whether it depicts the asserted event/context.\n"
+        "1. Treat search_candidate, image_candidate and duplicate matches as leads only; a matching image does not "
+        "prove origin, time, place or event identity. Do not invent similarity scores or visual comparisons.\n"
+        "2. Use retrieved_page passages explicitly linking this footage to its creator, an earlier publication, "
+        "reuse or editing. Report the earliest documented URL/date only within supplied evidence; "
+        "the date must occur in the cited observation.\n"
+        "3. original requires positive documentation of original creation/publication and identity with this video. "
+        "Finding no earlier version is not proof of originality. Use unknown when origin is unresolved. "
+        "Use other allowed history categories only when documented.\n"
+        "4. Extract previous_context_summary from the documented earlier event/context. "
+        "Set provenance_mismatch=true only for a direct contextual contradiction; "
+        "false requires positive agreement, otherwise null.\n"
+        "5. For core_assessment, verify the asserted subject/action/event using retrieved_page quotes. "
+        "A genuine event does not alone establish that the supplied video depicts it. "
+        "For provenance, distinguish event evidence from evidence identifying this media.\n"
+        "Only retrieved_page evidence is decisive here. Archive dates establish availability, not capture dates."
     ),
     "source": (
         "Identify who uploaded the video and who originally created, published, or broadcast it.\n"
-        "WORKFLOW:\n"
         "1. Extract uploader_name and uploader_profile from platform_metadata or retrieved_page evidence.\n"
-        "2. Inspect earliest known pages and duplicate evidence to identify the original_source_name "
-        "(the earliest or most authoritative creator, outlet, agency, or account).\n"
-        "3. Normalize source names: resolve aliases, channel names, outlet names, and @handles to canonical names.\n"
-        "4. Classify source_type: eyewitness, news outlet, news agency, official account, political actor, "
-        "activist group, entertainment source, satire source, or unknown.\n"
-        "5. Set source_is_uploader=true only if normalized uploader and original source refer to the same entity.\n"
-        "6. Set source_mismatch=true only if the claim's attribution contradicts the recovered original source.\n"
-        "CONSTRAINTS:\n"
-        "- A platform name (YouTube, Facebook) is not a source name.\n"
-        "- Do not infer source_type from the claim alone; use evidence about the source entity.\n"
-        "- Do not guess the original source from metadata that only identifies the current uploader."
+        "2. Set original_source_name only when a retrieved_page passage documents creation, original publication, "
+        "broadcast origin or credit for THIS footage. Being authoritative or the earliest search result "
+        "does not establish original authorship. Current uploader metadata alone does not identify the creator.\n"
+        "3. Normalize aliases, channel names and handles only when identity is documented. "
+        "A platform name such as YouTube or Facebook is not a source entity.\n"
+        "4. Classify source_type using retrieved_page evidence about that source entity and the allowed values.\n"
+        "5. Set source_is_uploader=true only when documented original source and uploader are the same entity; "
+        "false requires evidence they differ, otherwise null.\n"
+        "6. Compare the claim's attribution to the recovered original source. Set source_mismatch=true "
+        "for documented contradiction, false for documented agreement, otherwise null.\n"
+        "Only retrieved_page evidence establishes the original creator or source type. Verified platform_metadata "
+        "can establish the current uploader; supplied metadata or the claim's attribution is not independent evidence."
     ),
     "date": (
-        "Establish when the video was captured or when the depicted event occurred, and compare with the claimed date.\n"
-        "WORKFLOW:\n"
-        "1. Extract video_upload_date from platform_metadata evidence.\n"
-        "2. Extract earliest_online_date from archive_record evidence (Wayback snapshot dates).\n"
-        "3. Search event keywords, actor names, location names in retrieved_page evidence to find the event date.\n"
-        "4. Estimate the most plausible capture/event date (estimated_date) by combining event evidence. "
-        "Prefer event-page evidence over upload/archive dates.\n"
-        "5. Set capture_date_granularity: day, month, year, range, or unknown.\n"
-        "6. Compare claimed_date with estimated_date to set date_mismatch_type: "
-        "same, older video (video predates claim), newer video (video postdates claim), wrong event date, or unknown.\n"
-        "CONSTRAINTS:\n"
-        "- Upload date ≠ capture date. A video can be uploaded long after being recorded.\n"
-        "- Archive/Wayback date = first online snapshot date, not capture or event date.\n"
-        "- Do not use the claimed_date as evidence for estimated_date.\n"
-        "- estimated_date must be grounded in retrieved_page evidence; platform_metadata dates alone are insufficient.\n"
-        "- A capture date less precise than the claimed date cannot support a 'same' assessment."
+        "Establish the capture date, or a documented event date tied to THIS video, and compare to the claim.\n"
+        "1. Copy claimed_date from claimed_fields. Extract video_upload_date from a platform_metadata "
+        "observation and earliest_online_date from an archive_record observation when explicitly present. "
+        "They describe online availability only; neither proves when footage was captured.\n"
+        "2. Set estimated_date only from retrieved_page passages dating the depicted event or recording "
+        "and establishing its identity with this video. An article publication date is not automatically an event date. "
+        "If evidence dates only an unlinked event, leave estimated_date null.\n"
+        "3. Use capture_date_granularity to preserve actual precision: day, month, year, range or unknown. "
+        "Never invent day/month details.\n"
+        "4. Set date_mismatch_type from explicit comparison with claimed_date using the allowed values. "
+        "same requires evidence at least as precise as the claim; coarser compatible dates remain unknown.\n"
+        "Only retrieved_page evidence is decisive for the date assessment. claimed_date, upload, archive and "
+        "publication dates do not prove capture time. Metadata published_at outside observation is not citable."
     ),
     "location": (
-        "Determine where the video was captured or where the depicted event occurred.\n"
-        "WORKFLOW:\n"
-        "1. Extract candidate_locations from retrieved_page evidence, transcript, and metadata "
-        "(place names mentioned in titles, descriptions, and page text).\n"
-        "2. Use keyframe_analysis evidence for visual_location_clues: visible signs, road markings, "
-        "landmarks, terrain, license plates, uniforms, language on signs, shop names, weather.\n"
-        "3. Cross-reference textual candidates with visual clues to select the verified_location.\n"
-        "4. The verified_location must be the most specific place supported by multiple independent evidence types.\n"
-        "5. Compare claimed_location with verified_location to set location_mismatch_type: "
-        "same, different city, different region, different country, or unknown.\n"
-        "CONSTRAINTS:\n"
-        "- Do not guess a location from terrain or weather appearance alone.\n"
-        "- Geocoding/map lookup alone does not verify an event location; it only normalizes a place name.\n"
-        "- A location mentioned in a claim is NOT evidence for verified_location.\n"
-        "- Visual clues must be explicitly visible in keyframe analysis, not inferred.\n"
-        "- candidate_locations must be place names (city, region, country), not descriptions of objects."
+        "Locate the recording or depicted event using evidence linked to THIS footage/event.\n"
+        "1. Copy claimed_location from claimed_fields. Gather candidate_locations from page text, metadata "
+        "or supplied transcript as leads, not verified facts. Candidate locations must be place names.\n"
+        "2. Extract visual_location_clues only from explicit keyframe_analysis observations, such as a "
+        "transcribed sign or identified landmark. You cannot inspect image files from paths.\n"
+        "3. Choose verified_location only from retrieved_page passages establishing the depicted event's place. "
+        "Use the most specific place directly supported. Seek corroboration from independent sources, "
+        "not merely different evidence types or copies of one report. A direct documented source can suffice; "
+        "unresolved disagreement remains unknown.\n"
+        "4. Compare the grounded location to claimed_location using allowed location_mismatch_type values. "
+        "A broad compatible location does not prove a more specific claim. Leave verified_coordinates null; "
+        "the pipeline assigns coordinates through geocoding after location verification.\n"
+        "Only retrieved_page evidence is decisive. Geocoding normalizes names, not event identity. "
+        "Do not infer place from terrain/weather, the claim alone, or unconfirmed visual resemblance."
     ),
     "motivation": (
-        "Infer the original purpose or framing of the video and determine whether the current claim reframes it.\n"
-        "WORKFLOW:\n"
-        "1. Extract original_caption and original_description from the earliest known page or most authoritative source page "
-        "(retrieved_page or platform_metadata evidence).\n"
-        "2. Classify original_context_category based on original caption, description, source type, and event context: "
-        "news report, eyewitness, official record, campaign, activism, entertainment, satire, advertisement, archive, or unknown.\n"
-        "3. Compare claimed_framing with original_caption and original_description to detect reframing.\n"
-        "4. Set motivation_mismatch_type: same (framing matches), satire as real (satire presented as genuine), "
-        "entertainment as news (entertainment presented as real news), old news as current (old footage presented as current event), "
-        "political reframing (context altered for political messaging), or unknown.\n"
-        "CONSTRAINTS:\n"
-        "- Do not guess the creator's psychological intention or motive.\n"
-        "- original_context_category must be supported by evidence about the original context, not inferred from the claim.\n"
-        "- satire as real requires the original source to be a known satire source.\n"
-        "- old news as current requires a date mismatch (video significantly predates claimed event).\n"
-        "- If original_caption and original_description are unavailable, set original_context_category to unknown."
+        "Recover documented original framing and compare it with the current claim; never infer psychological intent.\n"
+        "1. Copy claimed_framing from claimed_fields. Extract original_caption and original_description "
+        "verbatim from retrieved_page observations documenting the original context of THIS video. "
+        "Uploader metadata, supplied text, earliest search rank or outlet authority alone does not prove original context.\n"
+        "2. Classify original_context_category using those passages and the allowed values. If neither "
+        "original_caption nor original_description is available, use unknown.\n"
+        "3. Compare documented original framing to claimed_framing using allowed motivation_mismatch_type values. "
+        "satire as real requires documented satirical context; entertainment as news requires documented "
+        "entertainment context; political reframing requires a documented change, not the topic being political.\n"
+        "4. old news as current requires retrieved_page evidence establishing an older event/video date "
+        "and a current-event framing in the claim. Derive those facts here; do not assume another agent verified them.\n"
+        "Only retrieved_page evidence is decisive. Missing original context is unknown, not evidence of reframing."
     ),
 }
