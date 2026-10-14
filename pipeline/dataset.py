@@ -63,7 +63,7 @@ def load_test_request(dataset_root, claim_id):
         data = json.load(handle)
     video = data.get("video_information") or {}
     payload = {"claim": data.get("claim")}
-    frame_dir = root / "test_output" / claim_id
+    frame_dir = root.parent / "test_output" / claim_id
     frames = (
         sorted(
             (
@@ -81,9 +81,9 @@ def load_test_request(dataset_root, claim_id):
     if frames:
         payload["keyframes"] = [str(path.resolve()) for path in frames]
     else:
-        video_path = root / "test_video" / (claim_id + ".mp4")
+        video_path = root.parent / "test_video" / (claim_id + ".mp4")
         if not video_path.is_file():
-            video_dir = root / "test_video" / claim_id
+            video_dir = root.parent / "test_video" / claim_id
             videos = (
                 sorted(
                     path
