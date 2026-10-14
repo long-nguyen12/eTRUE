@@ -26,7 +26,7 @@ VIDEO_EXTENSIONS = {
 
 def list_test_ids(dataset_root, limit=None):
     root = Path(dataset_root).resolve()
-    file_set = root / "test_set.txt"
+    file_set = root.parent / "test_set.txt"
     items = [
         line.strip()
         for line in file_set.read_text(encoding="utf-8-sig").splitlines()
