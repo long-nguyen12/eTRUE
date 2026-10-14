@@ -247,12 +247,26 @@ class _ReplayResponse:
 class _MetadataSession:
     def __init__(self, page):
         self.page = page
+        from utils.utils import normalize_social_url
+
+        allowed = set()
+        for key in ("final_url", "canonical_url", "original_url"):
+            val = self.page.get(key)
+            if val:
+                allowed.add(_url_key(val))
+                normalized = normalize_social_url(val).get("url")
+                if normalized:
+                    allowed.add(_url_key(normalized))
+        self.allowed = allowed
 
     def get(self, url, **kwargs):
-        if _url_key(url) not in {
-            _url_key(self.page["final_url"]),
-            _url_key(self.page["canonical_url"]),
-        }:
+        from utils.utils import normalize_social_url
+
+        normalized = normalize_social_url(url).get("url") or url
+        if (
+            _url_key(url) not in self.allowed
+            and _url_key(normalized) not in self.allowed
+        ):
             raise ValueError("Metadata requested an unscreened URL")
         return _ReplayResponse(self.page)
 
@@ -336,7 +350,8 @@ def collect_evidence(payload, components, media, store, errors):
         if post_page:
             try:
                 extraction = extract_media(
-                    post_page["final_url"], _MetadataSession(post_page),
+                    post_page["final_url"],
+                    _MetadataSession(post_page),
                     cookie_file=cookie_file_from_env(),
                 )
                 metadata = extraction.get("metadata") or {}
