@@ -90,6 +90,8 @@ class QwenRuntime:
             if inputs["input_ids"].shape[-1] + max_new_tokens <= CONTEXT_TOKENS:
                 self.last_evidence_ids = _evidence_ids(evidence)
                 return inputs
+            if not evidence:
+                raise ValueError("Claim and non-evidence context exceed the 8192-token budget")
             evidence.pop()
 
     def _generate(self, inputs, decoder, max_new_tokens):

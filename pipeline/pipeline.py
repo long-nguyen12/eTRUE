@@ -243,7 +243,10 @@ def verify_claim(
             )
         stage = "verdict"
         result.update(
-            predict_verdict(components, result["component_results"], store, runtime)
+            predict_verdict(
+                components, result["component_results"], store, runtime,
+                errors=errors, payload=payload, media_analysis=media.get("analysis"),
+            )
         )
         result["status"] = "partial" if errors else "ok"
     except Exception as error:

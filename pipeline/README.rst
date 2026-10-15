@@ -162,6 +162,16 @@ as an error without skipping the remaining pillar agents.
 The aggregator receives compact findings, accepted quotes and available evidence,
 with keyframe observations prioritized within the evidence budget. It reviews every
 applicable assessment in one call without rerunning pillar agents or retrieval.
+Its video_context consolidates supplied metadata, a transcript excerpt, vision
+observations and the first platform metadata record, keeping the sources separate.
+Metadata values, transcript excerpts and unparsed platform excerpts are capped at
+500 characters; full observations remain in the evidence store. Source references
+allow citation checks against exactly the context retained in the prompt.
+pipeline_context summarizes evidence counts and technical failures. Pillar errors
+carry component_id; each packet's partial_findings identifies only that component's
+failed unknown assessments. Provenance failure also explains the unknown core event.
+Failure reasons survive the pillar rules, while unasserted dimensions remain
+not_applicable. These context packets are model inputs, not new result fields or logs.
 Every assessment review has status, explanation, supporting_citations and
 refuting_citations. Citations contain exactly evidence_id and quote. Known findings
 may be retained or downgraded, never reversed. Unknown findings may
@@ -211,6 +221,10 @@ errors are minor or material. Decisive quotes are always checked.
 Completed verifications returning NEI include open_questions. The status field
 independently describes execution success or failure. Original per-record dataset
 ratings never enter model prompts.
+If the model supplies no questions, the NEI fallback distinguishes technical agent
+failures from available video context lacking independent corroboration, then asks
+which evidence would verify the unresolved claim. A technical failure is never
+treated as contradictory evidence and does not trigger retries.
 
 Evidence's verified flag means its document was acquired, not that its claim
 is true. Snippets, reverse-image matches and user metadata/transcripts are

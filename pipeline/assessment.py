@@ -269,6 +269,7 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
     }
     assessments = {p: empty_assessment(a) for p, a in applicable.items()}
     core = empty_assessment()
+    failed_pillars = {}
     claimed_fields = deepcopy(verification)
     shared_evidence = deepcopy(sorted(store.items, key=lambda e: not e.get("verified")))
     for pillar in PILLAR_PROMPTS:
@@ -299,7 +300,12 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
                 )
             assessments[pillar] = validated_assessment
         except (ValueError, RuntimeError) as error:
-            errors.append({"stage": "pillar:" + pillar, "message": str(error)})
+            errors.append({
+                "stage": "pillar:" + pillar,
+                "message": str(error),
+                "component_id": component["id"],
+            })
+            failed_pillars[pillar] = plain_explanation(str(error))[:200]
 
     grounded = " ".join(e["observation"] for e in store.items if e.get("verified"))
     apply_provenance_rules(verification)
@@ -372,6 +378,12 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
         if verification[path.split(".")[1]].get(path.split(".")[2]) is not None
     }
     for pillar in PILLAR_PROMPTS:
+        if pillar in failed_pillars:
+            reason = "Agent analysis failed: " + failed_pillars[pillar]
+            if applicable[pillar]:
+                assessments[pillar] = _unknown(assessments[pillar], reason)
+            if pillar == "provenance":
+                core = _unknown(core, reason)
         assessments[pillar]["agent"] = pillar + "_agent"
     core["agent"] = "provenance_agent"
     return {
@@ -422,7 +434,79 @@ def _decision_citations(result, evidence):
     return citations
 
 
-def predict_verdict(components, results, store, runtime):
+def _build_video_context(store, payload, media_analysis):
+    context = {}
+    metadata_fields = {
+        "title", "description", "platform", "uploader_name", "uploader_profile", "upload_date",
+    }
+    supplied = payload.get("metadata") or {}
+    supplied = {k: v[:500] for k, v in supplied.items()
+                if k in metadata_fields and isinstance(v, str) and v}
+    if supplied:
+        context["supplied_metadata"] = supplied
+    if payload.get("transcript"):
+        context["transcript"] = payload["transcript"][:500]
+    vision = {
+        key: deepcopy(media_analysis[key])
+        for key in (
+            "scene_summary", "ocr_text", "landmarks", "signs_and_logos",
+            "languages", "terrain_and_weather", "candidate_locations",
+        )
+        if media_analysis and media_analysis.get(key)
+    }
+    if vision:
+        context["vision_analysis"] = vision
+    for item in store.items:
+        if item["type"] != "platform_metadata":
+            continue
+        try:
+            metadata = json.loads(item["observation"])
+        except (ValueError, TypeError):
+            metadata = None
+        if isinstance(metadata, dict):
+            metadata = {k: v[:500] for k, v in metadata.items()
+                        if k in metadata_fields and isinstance(v, str) and v}
+        else:
+            metadata = {"raw": item["observation"][:500]}
+        if metadata:
+            context["platform_metadata"] = metadata
+        break
+    sources = {}
+    for key, kind in (
+        ("supplied_metadata", "supplied_metadata"), ("transcript", "supplied_transcript"),
+        ("vision_analysis", "keyframe_analysis"), ("platform_metadata", "platform_metadata"),
+    ):
+        item = next((e for e in store.items if e["type"] == kind), None)
+        if key in context and item:
+            sources[key] = {"evidence_id": item["id"], "source": item["source"]}
+    if sources:
+        context["evidence_sources"] = sources
+    return context or None
+
+
+def _build_pipeline_context(store, errors):
+    counts = {}
+    for item in store.items:
+        counts[item["type"]] = counts.get(item["type"], 0) + 1
+    return {
+        "errors": [
+            {"stage": e["stage"], "summary": e["message"][:200],
+             **({"component_id": e["component_id"]} if "component_id" in e else {})}
+            for e in errors
+        ],
+        "evidence_summary": counts,
+        "pillar_errors": list(dict.fromkeys(
+            e["stage"][len("pillar:"):] for e in errors if e["stage"].startswith("pillar:")
+        )),
+        "retrieval_issues": list(dict.fromkeys(
+            e["message"][:150] for e in errors if e["stage"].startswith("retrieval")
+        )),
+    }
+
+
+def predict_verdict(components, results, store, runtime, errors=None,
+                    payload=None, media_analysis=None):
+    errors = errors if errors is not None else []
     packets = []
     quoted_evidence = {}
     templates = []
@@ -459,6 +543,14 @@ def predict_verdict(components, results, store, runtime):
                 "component_id": result["component_id"],
                 "assessments": findings,
                 "required_reviews": list(reviews),
+                "partial_findings": {
+                    pillar: {"error": error["message"][:200]}
+                    for pillar, assessment in assessments.items()
+                    if assessment["status"] == "unknown"
+                    for error in errors
+                    if error["stage"] == "pillar:" + ("provenance" if pillar == "core" else pillar)
+                    and error.get("component_id") == result["component_id"]
+                },
             }
         )
         templates.append(
@@ -475,6 +567,8 @@ def predict_verdict(components, results, store, runtime):
         "label_composition": LABEL_COMPOSITION,
         "claim_components": deepcopy(components),
         "results": packets,
+        "video_context": _build_video_context(store, payload or {}, media_analysis),
+        "pipeline_context": _build_pipeline_context(store, errors),
         "evidence": deepcopy(
             sorted(
                 store.items,
@@ -494,7 +588,13 @@ def predict_verdict(components, results, store, runtime):
         },
     }
     instructions = """You are verdict_agent. Combine video observations with available evidence to review
-exactly required_reviews; do not rerun agents or retrieval. Keep supported/refuted or downgrade
+exactly required_reviews; do not rerun agents or retrieval.
+video_context consolidates supplied_metadata, a transcript excerpt, vision_analysis and platform_metadata;
+use it when pillars are unknown, preserving each source's limitations. Its evidence_sources identify
+quotable observations; cite only retained content. Supplied input is not independent confirmation.
+pipeline_context describes errors and evidence availability; partial_findings links failures to each
+component. Agent/retrieval failures are limitations, never evidence contradicting the claim.
+Keep supported/refuted or downgrade
 to unknown; resolve unknown to supported/refuted only with directly grounding quotes in its
 supporting_citations/refuting_citations. Otherwise keep unknown. Never reverse a known finding.
 Every review has status, explanation and both citation lists. Each citation is
@@ -531,6 +631,13 @@ open question; otherwise [] is allowed.
         for e in store.items
         if e["id"] in quoted_evidence
     }
+    video_context = data["video_context"] or {}
+    for key, reference in video_context.get("evidence_sources", {}).items():
+        item = next(e for e in store.items if e["id"] == reference["evidence_id"])
+        observation = json.dumps(video_context[key], ensure_ascii=False)
+        if item["id"] in available_evidence:
+            observation = available_evidence[item["id"]]["observation"] + "\n" + observation
+        available_evidence[item["id"]] = {**item, "observation": observation}
     available_evidence.update(
         {e["id"]: e for e in store.items if e["id"] in runtime.last_evidence_ids}
     )
@@ -627,8 +734,18 @@ open question; otherwise [] is allowed.
         raise ValueError("open_questions must be a list of plain text strings")
     questions = [plain_explanation(q) for q in raw["open_questions"]]
     if overall == "NEI" and not questions:
+        error_pillars = data["pipeline_context"]["pillar_errors"]
+        if error_pillars:
+            questions.append(
+                "What independent evidence can resolve the unknown findings after the "
+                + ", ".join(error_pillars) + " agent analyses failed?"
+            )
+        elif data["video_context"]:
+            questions.append(
+                "Which independent evidence corroborates the claim beyond the available video information?"
+            )
         unverified = {r["component_id"] for r in reviewed if r["verdict"] == "NEI"}
-        questions = [
+        questions += [
             plain_explanation("What evidence would verify this claim: " + c["text"] + "?")
             for c in components if not unverified or c["id"] in unverified
         ]
