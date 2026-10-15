@@ -39,7 +39,7 @@ def run_pillar(
     }
     example = {
         "fields": {pillar: defaults},
-        "field_citations": {},
+        "field_citations": {pillar + "." + field: [] for field in defaults},
         "assessments": {pillar: assessment},
     }
     if pillar == "provenance":
@@ -60,9 +60,8 @@ def run_pillar(
         + " Follow applicable_pillars: false requires not_applicable; otherwise supported/refuted/unknown."
         + " Copy claimed fields from claimed_fields. Unknown facts are null; absent lists are []."
         + " Cite observed fields and decisive findings under the shared rules."
-        + " Return every field in this complete JSON structure, replacing defaults with grounded values;"
-        + " add no fields or other pillar keys:\n"
-        + json.dumps(example)
+        + " Fill response_template exactly; keep every field and root key, including core_assessment when present."
+        + " field_citations uses the literal dotted keys in the template, never nested pillar objects."
         + "\nAllowed categorical values:\n"
         + json.dumps(allowed)
     )
@@ -77,11 +76,15 @@ def run_pillar(
             "claimed_fields": {pillar: deepcopy(claimed_fields)},
             "supplied_media": deepcopy(media),
             "evidence": deepcopy(evidence),
+            "response_template": deepcopy(example),
         },
         max_new_tokens=2048,
     )
     if not isinstance(result, dict):
         raise ValueError("Pillar agent response must be an object")
+    result.setdefault("field_citations", {})
+    if pillar == "provenance":
+        result.setdefault("core_assessment", deepcopy(example["core_assessment"]))
     if set(result) != set(example):
         raise ValueError("Pillar agent response must contain exactly " + ", ".join(example))
     for key in ("fields", "field_citations", "assessments"):
@@ -107,10 +110,16 @@ def run_pillar(
             valid = isinstance(value, str)
         if not valid:
             raise ValueError(pillar + "." + field + " has an invalid type")
+    nested = result["field_citations"].pop(pillar, {})
+    if isinstance(nested, dict):
+        for field, citations in nested.items():
+            path = pillar + "." + field
+            if not result["field_citations"].get(path):
+                result["field_citations"][path] = citations
     for path, citations in result["field_citations"].items():
         if path not in {pillar + "." + field for field in defaults}:
             raise ValueError("Unknown field citation path: " + str(path))
-        _validate_citation_shape(citations)
+        result["field_citations"][path] = _validate_citation_shape(citations)
     _validate_assessment(result["assessments"][pillar], applicable)
     if pillar == "provenance":
         _validate_assessment(result["core_assessment"], True)
@@ -120,23 +129,34 @@ def run_pillar(
 def _validate_citation_shape(citations):
     if not isinstance(citations, list):
         raise ValueError("Citations must be a list")
+    valid = []
     for citation in citations:
-        if not isinstance(citation, dict) or set(citation) != {"evidence_id", "quote"}:
-            raise ValueError("Each citation requires evidence_id and quote")
-        if any(not isinstance(value, str) or not value.strip() for value in citation.values()):
-            raise ValueError("Citation evidence_id and quote must be nonempty strings")
+        if not isinstance(citation, dict):
+            continue
+        if all(
+            isinstance(citation.get(key), str) and citation[key].strip()
+            for key in ("evidence_id", "quote")
+        ):
+            valid.append({key: citation[key].strip() for key in ("evidence_id", "quote")})
+    return valid
 
 
 def _validate_assessment(assessment, applicable):
     keys = {"status", "explanation", "supporting_citations", "refuting_citations"}
     if not isinstance(assessment, dict) or set(assessment) != keys:
         raise ValueError("Assessment requires status, explanation and both citation lists")
+    if not applicable:
+        assessment.update(
+            status="not_applicable",
+            explanation="The claim does not assert this dimension.",
+            supporting_citations=[], refuting_citations=[],
+        )
     statuses = {"supported", "refuted", "unknown"} if applicable else {"not_applicable"}
     if not isinstance(assessment["status"], str) or assessment["status"] not in statuses:
         raise ValueError("Invalid assessment status for pillar applicability")
     assessment["explanation"] = plain_explanation(assessment["explanation"])
     for key in ("supporting_citations", "refuting_citations"):
-        _validate_citation_shape(assessment[key])
+        assessment[key] = _validate_citation_shape(assessment[key])
 
 
 PILLAR_PROMPTS = {
@@ -145,7 +165,8 @@ PILLAR_PROMPTS = {
         "creation/publication evidence identifying this footage; absence of earlier results is insufficient. "
         "Distinguish media identity from event occurrence. Report only documented earliest publication. "
         "Set provenance_mismatch true/false for documented contradiction/agreement, otherwise null. "
-        "core_assessment checks every asserted subject/action/event separately from media provenance."
+        "core_assessment checks every asserted subject/action/event from independent event reports; "
+        "visual depiction and verified video provenance are not prerequisites."
     ),
     "source": (
         "Separate current uploader from original creator/publisher/broadcaster. Platform metadata may identify "
@@ -155,7 +176,8 @@ PILLAR_PROMPTS = {
         "true/false requires evidence, otherwise null."
     ),
     "date": (
-        "Compare claimed_date with a documented capture/event date tied to THIS video, never an unlinked event. "
+        "Compare claimed_date with the documented date of the asserted event, or capture if explicitly claimed. "
+        "A report identifying the same event can suffice; the date need not appear in keyframes. "
         "Extract video_upload_date from platform_metadata and earliest_online_date from archive_record observations; "
         "these and publication dates establish availability, not capture. Preserve actual capture_date_granularity; "
         "invent no precision. date_mismatch_type=same requires evidence at least as precise as the claim; "

@@ -24,7 +24,6 @@ def run_true_test(
         "dataset": str(dataset_root),
         "processed_records": 0,
         "started_at": now(),
-        "status": "running",
         "records": [],
     }
     try:
@@ -43,7 +42,7 @@ def run_true_test(
             )
         except (OSError, ValueError) as error:
             print(f"Error processing record {record}: {error}", flush=True)
-            
+
         result["claim_id"] = record
         write_json(result_file, result)
         report["records"].append(

@@ -149,7 +149,7 @@ def verify_claim(
         "normalized_claim": None,
         "claim_components": [],
         "component_results": [],
-        "verdict": None,
+        "verdict": "NEI",
         "explanation": "",
         "open_questions": [],
         "citations": [],

@@ -72,7 +72,8 @@ post_url. At most four frames are analyzed and three used for reverse-image
 retrieval. Downloaded video and extracted frames persist under work_dir;
 supplied media files are only read. Output/work directories inside the existing
 eTRUE or TRUE_Dataset trees are rejected. Invalid input raises ValueError.
-Runtime failures return status=error and verdict=null.
+Runtime failures return status=error and verdict=NEI; the error status indicates
+that verification did not complete.
 
 verify_claim accepts an optional runtime=QwenRuntime(...) for repeated calls.
 Without it, the function creates and releases its own runtime. With a supplied
@@ -139,9 +140,13 @@ are technical errors rather than silently omitted claims.
 
 Each pillar returns a complete JSON object with fields, field_citations and
 assessments, all keyed by its own pillar name. Provenance also returns a separate
-core_assessment. The example contains every defined field; invalid keys, types or
-assessment structures are rejected before field extraction. Missing observations
-remain null or [], while unsupported findings become unknown.
+core_assessment. Each agent receives a response_template containing all defined
+fields and dotted field_citations keys. Nested field citations are flattened when
+their field names are explicit; ambiguous group citations are discarded. Missing
+field_citations defaults to {}, and missing core_assessment remains unknown without
+discarding the other provenance findings. Malformed citation entries are dropped
+without inventing quotes; other invalid response structures are rejected.
+Missing observations remain null or [], while unsupported findings become unknown.
 
 The agents are logical roles within the local pipeline, without an agent
 framework or extra models. They and the final aggregator reuse one loaded
@@ -157,16 +162,23 @@ as an error without skipping the remaining pillar agents.
 The aggregator receives compact findings, accepted quotes and available evidence,
 with keyframe observations prioritized within the evidence budget. It reviews every
 applicable assessment in one call without rerunning pillar agents or retrieval.
-Known findings may be retained or downgraded, never reversed. Unknown findings may
+Every assessment review has status, explanation, supporting_citations and
+refuting_citations. Citations contain exactly evidence_id and quote. Known findings
+may be retained or downgraded, never reversed. Unknown findings may
 be resolved using video observations and existing evidence, with exact supporting
 or refuting quotes; missing evidence and unresolved conflicts remain unknown.
 New citations are accepted only from evidence actually shown to the aggregator.
-Python recomputes the verdicts and attaches accepted citations. Reviewed decisions
+Python validates ratings against grounded findings and attaches accepted citations. Reviewed decisions
 do not rewrite the pillar's extracted verification fields.
+Independent reports can establish the asserted event and its documented date
+without visual confirmation in keyframes. Event truth and video provenance are
+assessed separately; uncertain provenance does not invalidate an event report.
 The response template contains the actual component IDs and required reviews.
-Missing, duplicate or extra IDs/reviews, status reversals and label disagreement
-are technical errors. Invalid JSON and validation errors propagate without masking
-the original failure.
+Missing, duplicate or extra IDs/reviews and status reversals are technical errors.
+Missing or conflicting decisive citations downgrade an assessment to unknown;
+Unsupported verdicts become NEI, with explanations updated to reflect missing evidence.
+Invalid JSON and other structural validation errors propagate without masking the
+original failure.
 Component results are updated only after the entire response passes validation.
 
 Results contain the original/normalized claim, claim_components,
@@ -183,11 +195,22 @@ Every explanation field, including overall, component and pillar explanations,
 is a plain prose string: no Markdown, HTML, JSON, URLs or evidence IDs.
 Verdicts, citations, evidence and trace remain separate structured JSON fields.
 
-True requires the core event and all applicable pillars to be supported.
-False requires core-event refutation. Misleading requires a supported core
-event and a refuted context pillar. Unverified represents missing or conflicting
-evidence. Overall decisions preserve all component decisions; they do not vote
-across pillars. Invalid verdict/citation output is a technical error.
+Component and overall verdicts use exactly TRUE, FALSE and NEI. The dataset label
+composition is defined in pipeline.assessment.LABEL_COMPOSITION:
+
+* TRUE: True, Mostly True, Correct Attribution.
+* FALSE: False, Miscaptioned, Mixture, Fake, Mostly False.
+* NEI: insufficient or conflicting evidence.
+
+The verdict agent judges the substance and importance of assertions, not counts of
+pillars/components. Established minor errors may still yield TRUE as Mostly True;
+material false assertions, including Mixture, yield FALSE. Uncertainty alone is not
+FALSE or a proven mixture. TRUE needs a supported core assertion and no unresolved
+assessments; FALSE needs a grounded refutation. The agent judges whether established
+errors are minor or material. Decisive quotes are always checked.
+Completed verifications returning NEI include open_questions. The status field
+independently describes execution success or failure. Original per-record dataset
+ratings never enter model prompts.
 
 Evidence's verified flag means its document was acquired, not that its claim
 is true. Snippets, reverse-image matches and user metadata/transcripts are
