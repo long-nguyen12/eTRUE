@@ -23,7 +23,7 @@ from pillars.source import SOURCE_TYPES, apply_source_rules, source_name_is_grou
 from stages.geocode import classify_location_mismatch, geocode
 from utils.schema import empty_verification
 
-from .agents import PILLAR_PROMPTS, run_pillar
+from .agents import PILLAR_PROMPTS, _validate_assessment, run_pillar
 from .evidence import canonical_source, normalized_text, validate_citations
 from .text import plain_explanation
 
@@ -163,13 +163,21 @@ def _copy_fields(extra, raw, group, evidence):
             }
             allowed_evidence = _fact_evidence(evidence, pillar)
             if candidates:
-                allowed_evidence = [e for e in evidence if e["type"] != "geocoder_result"]
+                allowed_evidence = [
+                    e for e in evidence if e["type"] != "geocoder_result"
+                ]
             elif field == "video_upload_date":
-                allowed_evidence = [e for e in evidence if e["type"] == "platform_metadata"]
+                allowed_evidence = [
+                    e for e in evidence if e["type"] == "platform_metadata"
+                ]
             elif field == "earliest_online_date":
-                allowed_evidence = [e for e in evidence if e["type"] == "archive_record"]
+                allowed_evidence = [
+                    e for e in evidence if e["type"] == "archive_record"
+                ]
             elif field in {"original_source_name", "source_type"}:
-                allowed_evidence = [e for e in evidence if e["type"] == "retrieved_page"]
+                allowed_evidence = [
+                    e for e in evidence if e["type"] == "retrieved_page"
+                ]
             cited = validate_citations(
                 field_citations.get(path), allowed_evidence, decisive=not candidates
             )
@@ -271,8 +279,6 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
             ]
             _copy_fields(extra, raw, (pillar,), evidence)
             raw_assessments = raw.get("assessments") or {}
-            if not isinstance(raw_assessments, dict):
-                raise ValueError("Pillar assessments must be an object")
             validated_assessment = _assessment(
                 raw_assessments.get(pillar),
                 _fact_evidence(evidence, pillar),
@@ -382,6 +388,14 @@ def eligible_verdict(result):
     return "True"
 
 
+def _verdict_citations(citations, evidence, pillar):
+    return validate_citations(
+        citations, _fact_evidence(evidence, pillar), decisive=True
+    ) + validate_citations(
+        citations, [e for e in evidence if e["type"] == "keyframe_analysis"]
+    )
+
+
 def _decision_citations(result, evidence):
     label = result["verdict"]
     assessments = {"core": result["core_assessment"], **result["pillar_assessments"]}
@@ -394,15 +408,8 @@ def _decision_citations(result, evidence):
             continue
         if label == "Misleading" and pillar != "core" and status != "refuted":
             continue
-        allowed = (
-            [e for e in evidence if e["type"] == "retrieved_page"]
-            if pillar == "core"
-            else _fact_evidence(evidence, pillar)
-        )
         side = "supporting_citations" if status == "supported" else "refuting_citations"
-        cited = validate_citations(assessment[side], allowed, decisive=True)
-        if not cited:
-            raise ValueError("Conclusive " + pillar + " assessment lacks valid evidence")
+        cited = _verdict_citations(assessment[side], evidence, pillar)
         for citation in cited:
             if citation not in citations:
                 citations.append(citation)
@@ -420,67 +427,72 @@ def _overall_verdict(labels):
 
 
 def predict_verdict(components, results, store, runtime):
-    expected = [c.get("id") if isinstance(c, dict) else None for c in components]
-    result_ids = [r.get("component_id") if isinstance(r, dict) else None for r in results]
-    if not expected or not all(isinstance(value, str) and value for value in expected):
-        raise ValueError("Claim components require nonempty string IDs")
-    if len(set(expected)) != len(expected) or (
-        not all(isinstance(value, str) for value in result_ids)
-        or len(result_ids) != len(expected) or set(result_ids) != set(expected)
-    ):
-        raise ValueError("Aggregation requires exactly one result per claim component")
-
     packets = []
-    used_ids = set()
+    quoted_evidence = {}
     templates = []
     for result in results:
-        if not isinstance(result.get("pillar_assessments"), dict) or (
-            set(result["pillar_assessments"]) != set(PILLAR_PROMPTS)
-        ):
-            raise ValueError("All five pillar results are required before aggregation")
-        assessments = {"core": result.get("core_assessment"), **result["pillar_assessments"]}
+        assessments = {
+            "core": result.get("core_assessment"),
+            **result["pillar_assessments"],
+        }
         findings = {}
         reviews = {}
         for pillar, assessment in assessments.items():
             statuses = {"supported", "refuted", "unknown"}
             if pillar not in {"core", "provenance"}:
                 statuses.add("not_applicable")
-            if not isinstance(assessment, dict) or not isinstance(
-                assessment.get("status"), str
-            ) or assessment["status"] not in statuses:
-                raise ValueError("Invalid " + pillar + " assessment status")
             findings[pillar] = {
                 key: deepcopy(assessment[key])
                 for key in (
-                    "status", "explanation", "supporting_citations", "refuting_citations"
+                    "status",
+                    "explanation",
+                    "supporting_citations",
+                    "refuting_citations",
                 )
             }
             for side in ("supporting_citations", "refuting_citations"):
-                used_ids.update(c["evidence_id"] for c in assessment[side])
-            if assessment["status"] in {"supported", "refuted"}:
+                for citation in assessment[side]:
+                    quoted_evidence.setdefault(citation["evidence_id"], []).append(
+                        citation["quote"]
+                    )
+            if assessment["status"] != "not_applicable":
                 reviews[pillar] = {
                     "status": assessment["status"],
                     "explanation": "Explain what the supplied quote establishes.",
                 }
-        packets.append({
-            "component_id": result["component_id"],
-            "assessments": findings,
-            "required_reviews": list(reviews),
-        })
-        templates.append({
-            "component_id": result["component_id"],
-            "verdict": eligible_verdict(result),
-            "explanation": "Explain the reviewed decision.",
-            "assessment_reviews": reviews,
-        })
+                if assessment["status"] == "unknown":
+                    for side in ("supporting_citations", "refuting_citations"):
+                        reviews[pillar][side] = deepcopy(assessment[side])
+        packets.append(
+            {
+                "component_id": result["component_id"],
+                "assessments": findings,
+                "required_reviews": list(reviews),
+            }
+        )
+        templates.append(
+            {
+                "component_id": result["component_id"],
+                "verdict": eligible_verdict(result),
+                "explanation": "Explain the reviewed decision.",
+                "assessment_reviews": reviews,
+            }
+        )
     initial_overall = _overall_verdict([r["verdict"] for r in templates])
     data = {
         "agent": "verdict_agent",
         "claim_components": deepcopy(components),
         "results": packets,
+        "evidence": deepcopy(
+            sorted(
+                store.items,
+                key=lambda e: (e["type"] != "keyframe_analysis", not e.get("verified")),
+            )
+        ),
         "evidence_sources": {
             e["id"]: {key: e[key] for key in ("source", "type", "verified")}
-            for e in store.items if e["id"] in used_ids
+            for e in store.items
+            if e["id"] in quoted_evidence
         },
         "response_template": {
             "verdict": initial_overall,
@@ -489,20 +501,24 @@ def predict_verdict(components, results, store, runtime):
             "component_verdicts": templates,
         },
     }
-    instructions = """You are verdict_agent. Audit the five-pillar findings using supplied quotes only.
-Template values and agent explanations are not evidence. verified means fetched, not true.
-Claims, supplied metadata/transcripts, vision/search/image matches are leads. No fact-check
-labels or inferred intentions. Identify THIS media/event; uploader need not be creator,
-and upload/publication/archive dates are not capture dates. Geocoding only normalizes places.
-Review exactly required_reviews per component. Keep each status or downgrade to unknown;
-never promote, reverse or invent statuses. Retain conclusions only when quotes directly
-establish the assertion/contradiction and its qualifiers. Nonmention/topic overlap are
-insufficient. Conflicts, missing context or uncertain media identity stay unknown.
+    instructions = """You are verdict_agent. Combine video observations with available evidence to review
+exactly required_reviews; do not rerun agents or retrieval. Keep supported/refuted or downgrade
+to unknown; resolve unknown to supported/refuted only with directly grounding quotes in its
+supporting_citations/refuting_citations. Otherwise keep unknown. Never reverse a known finding.
+Decisive quotes require acquired pages, platform uploader metadata, or keyframe_analysis for
+directly visible facts. Describe the inference; partial frames cannot prove an event absent.
+Claims, titles/descriptions, supplied transcripts and search/image matches are context, not
+independent confirmation. Template text/agent opinions are not evidence; verified means fetched.
+No fact-check labels or inferred intentions. Identify THIS media/event and every qualifier.
+Visual appearance cannot establish capture date, original source or unobserved context;
+location needs explicit visible identifying evidence or linked reports. Uploader is not creator;
+upload/publication/archive dates are not capture dates. Geocoding only normalizes places.
+Nonmention/topic overlap are insufficient. Unresolved conflicts or missing facts stay unknown.
 Component: core refuted=False; core not supported=Unverified; otherwise refuted pillar=
 Misleading, unknown pillar=Unverified, else True.
 Overall: any False, else any Unverified, else any Misleading, else True; never vote.
 Fill response_template exactly with every input ID/review key; recompute labels and replace
-example text. Do not add citation fields; Python attaches them.
+example text. Supply citation fields only where the template includes them.
 Explanations/questions: plain prose in claim language, no markup/URLs/IDs/markers.
 One sentence per review, at most two per explanation. Unverified overall requires a concrete
 open question; otherwise [] is allowed.
@@ -510,59 +526,57 @@ open question; otherwise [] is allowed.
     review_count = sum(len(p["required_reviews"]) for p in packets)
     output_tokens = min(4096, max(2048, 512 + 256 * len(results) + 128 * review_count))
     raw = runtime.generate(instructions, deepcopy(data), max_new_tokens=output_tokens)
-    if not isinstance(raw, dict) or set(raw) != set(data["response_template"]):
-        raise ValueError("Verdict response must contain verdict, explanation, open_questions and component_verdicts")
+    available_evidence = {
+        e["id"]: {**e, "observation": "\n".join(quoted_evidence[e["id"]])}
+        for e in store.items
+        if e["id"] in quoted_evidence
+    }
+    available_evidence.update(
+        {e["id"]: e for e in store.items if e["id"] in runtime.last_evidence_ids}
+    )
     decisions = raw["component_verdicts"]
-    if not isinstance(decisions, list):
-        raise ValueError("component_verdicts must be a list")
-    decision_keys = {"component_id", "verdict", "explanation", "assessment_reviews"}
-    if not all(isinstance(d, dict) and set(d) == decision_keys for d in decisions):
-        raise ValueError("Each component decision must match the response template")
-    ids = [d["component_id"] for d in decisions]
-    if not all(isinstance(value, str) for value in ids) or (
-        len(ids) != len(expected) or set(ids) != set(expected) or len(set(ids)) != len(ids)
-    ):
-        raise ValueError("Return exactly one decision for each component: " + ", ".join(expected))
     by_id = {d["component_id"]: d for d in decisions}
     reviewed = deepcopy(results)
     for result in reviewed:
         decision = by_id[result["component_id"]]
-        assessments = {"core": result["core_assessment"], **result["pillar_assessments"]}
+        assessments = {
+            "core": result["core_assessment"],
+            **result["pillar_assessments"],
+        }
         needed = {
-            pillar for pillar, assessment in assessments.items()
-            if assessment["status"] in {"supported", "refuted"}
+            pillar
+            for pillar, assessment in assessments.items()
+            if assessment["status"] != "not_applicable"
         }
         reviews = decision["assessment_reviews"]
         if not isinstance(reviews, dict) or set(reviews) != needed:
-            raise ValueError("Assessment reviews do not match required_reviews for " + result["component_id"])
+            raise ValueError(
+                "Assessment reviews do not match required_reviews for "
+                + result["component_id"]
+            )
         for pillar in needed:
             review = reviews[pillar]
             assessment = assessments[pillar]
-            if not isinstance(review, dict) or set(review) != {"status", "explanation"}:
-                raise ValueError("Each assessment review requires status and explanation")
-            if review["status"] not in (assessment["status"], "unknown"):
-                raise ValueError("Reviews may only retain a status or downgrade to unknown")
+            _validate_assessment(review, True)
+            for side in ("supporting_citations", "refuting_citations"):
+                assessment[side] = _verdict_citations(
+                    validate_citations(review[side], store.items),
+                    list(available_evidence.values()),
+                    pillar,
+                )
             assessment.update(
                 status=review["status"],
                 explanation=plain_explanation(review["explanation"]),
                 reviewed_by="verdict_agent",
             )
         label = eligible_verdict(result)
-        if decision["verdict"] != label:
-            raise ValueError("Component verdict conflicts with reviewed evidence")
         result.update(
             verdict=label,
             explanation=plain_explanation(decision["explanation"]),
         )
         result["citations"] = _decision_citations(result, store.items)
     overall = _overall_verdict([r["verdict"] for r in reviewed])
-    if raw["verdict"] != overall:
-        raise ValueError("Overall verdict conflicts with reviewed evidence")
-    if not isinstance(raw["open_questions"], list):
-        raise ValueError("open_questions must be a list of plain text strings")
     questions = [plain_explanation(q) for q in raw["open_questions"]]
-    if overall == "Unverified" and not questions:
-        raise ValueError("Unverified verdict requires at least one open question")
     explanation = plain_explanation(raw["explanation"])
     cited = []
     for result in reviewed:

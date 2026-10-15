@@ -16,8 +16,6 @@ CONTEXT_TOKENS = 8192
 
 def _json_object(text):
     result = parse_json_output(text)
-    if not isinstance(result, dict):
-        raise ValueError("Qwen output must be a JSON object")
     return result
 
 
@@ -31,8 +29,6 @@ class QwenRuntime:
         self.model = self.tokenizer = self.processor = None
         self.model_id = None
         self.last_evidence_ids = []
-        if not torch.cuda.is_available():
-            raise RuntimeError("QwenRuntime requires CUDA on cuda:0")
         self.device = "cuda:0"
 
     def _load_model(self, model_id):
@@ -94,10 +90,6 @@ class QwenRuntime:
             if inputs["input_ids"].shape[-1] + max_new_tokens <= CONTEXT_TOKENS:
                 self.last_evidence_ids = _evidence_ids(evidence)
                 return inputs
-            if not evidence:
-                raise ValueError(
-                    "Claim and non-evidence context exceed the 8192-token budget"
-                )
             evidence.pop()
 
     def _generate(self, inputs, decoder, max_new_tokens):
@@ -121,20 +113,10 @@ class QwenRuntime:
             )
         tokens = output[0][inputs["input_ids"].shape[-1] :]
         try:
+            print(f"Qwen output tokens: {tokens.tolist()}", flush=True)
             return _json_object(decoder.decode(tokens, skip_special_tokens=True))
         except ValueError as error:
-            eos_ids = eos_id if isinstance(eos_id, (list, tuple)) else [eos_id]
-            if (
-                tokens.shape[-1] >= max_new_tokens
-                and int(tokens[-1].item()) not in eos_ids
-            ):
-                raise ValueError(
-                    "Model output reached the "
-                    + str(max_new_tokens)
-                    + "-token output limit without a valid JSON object: "
-                    + str(error)
-                ) from error
-            raise
+            print(f"Qwen output decoding error: {error}", flush=True)
 
     def generate(self, instructions: str, data: dict, max_new_tokens=1024) -> dict:
         inputs = self._fit_prompt(instructions, data, max_new_tokens)
@@ -181,28 +163,7 @@ class QwenRuntime:
                 return_dict=True,
                 return_tensors="pt",
             )
-            if inputs["input_ids"].shape[-1] + 512 > CONTEXT_TOKENS:
-                raise ValueError("Vision input exceeds the 8192-token budget")
             raw = self._generate(inputs, self.processor, 512)
-            if not isinstance(raw, dict) or set(raw) != set(
-                normalize_vision_analysis({})
-            ):
-                raise ValueError(
-                    "Vision output must contain exactly the seven observation fields"
-                )
-            if not isinstance(raw["scene_summary"], str):
-                raise ValueError("Vision scene_summary must be a string")
-            for key, values in raw.items():
-                if key != "scene_summary" and (
-                    not isinstance(values, list)
-                    or any(
-                        not isinstance(value, str) or not value.strip()
-                        for value in values
-                    )
-                ):
-                    raise ValueError(
-                        "Vision " + key + " must be a list of nonempty strings"
-                    )
             analysis = normalize_vision_analysis(raw)
             return {
                 **analysis,

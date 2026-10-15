@@ -8,13 +8,10 @@ import subprocess
 from pathlib import Path
 
 from stages.vision import evenly_spaced
-from utils.json_ld import public_http_url
 from utils.ytdlp import cookie_file_from_env
 
 
 def _download_video(url, work_dir):
-    if not public_http_url(url):
-        raise ValueError("Video URL must be a public HTTP(S) URL")
     import yt_dlp
 
     options = {
@@ -35,8 +32,6 @@ def _download_video(url, work_dir):
     with yt_dlp.YoutubeDL(options) as downloader:
         info = downloader.extract_info(url, download=True)
         path = Path(downloader.prepare_filename(info)).resolve()
-    if path.parent != work_dir.resolve() or not path.is_file():
-        raise ValueError("Video download did not create a file inside work_dir")
     return path
 
 
@@ -54,8 +49,6 @@ def _sample_frames(video_path, work_dir):
         duration = next((stream.get("duration") for stream in details.get("streams", [])
                          if stream.get("duration")), None)
     duration = float(duration)
-    if not math.isfinite(duration) or duration <= 0:
-        raise ValueError("Video duration must be finite and positive")
     # Midpoints avoid seeking beyond the last frame on short videos.
     timestamps = [duration * (index + 0.5) / 4 for index in range(4)]
     frames, errors, extracted_timestamps = [], [], []
@@ -70,8 +63,6 @@ def _sample_frames(video_path, work_dir):
                 ],
                 capture_output=True, text=True, check=True, timeout=60,
             )
-            if not frame.is_file() or not frame.stat().st_size:
-                raise ValueError("FFmpeg did not extract a frame")
             frames.append(frame)
             extracted_timestamps.append(round(timestamp, 6))
         except (OSError, subprocess.SubprocessError, ValueError) as error:

@@ -154,10 +154,15 @@ that return not_applicable. After all components, verdict_agent combines their
 validated results in a separate call. A malformed pillar response is recorded
 as an error without skipping the remaining pillar agents.
 
-The aggregator receives compact findings and their accepted quotes, reviews every
-supported/refuted assessment, and may retain it or downgrade it to unknown. It cannot
-promote an unknown assessment or reverse a finding. Python recomputes the verdicts
-and attaches the accepted citations without asking the model to copy them again.
+The aggregator receives compact findings, accepted quotes and available evidence,
+with keyframe observations prioritized within the evidence budget. It reviews every
+applicable assessment in one call without rerunning pillar agents or retrieval.
+Known findings may be retained or downgraded, never reversed. Unknown findings may
+be resolved using video observations and existing evidence, with exact supporting
+or refuting quotes; missing evidence and unresolved conflicts remain unknown.
+New citations are accepted only from evidence actually shown to the aggregator.
+Python recomputes the verdicts and attaches accepted citations. Reviewed decisions
+do not rewrite the pillar's extracted verification fields.
 The response template contains the actual component IDs and required reviews.
 Missing, duplicate or extra IDs/reviews, status reversals and label disagreement
 are technical errors. Invalid JSON and validation errors propagate without masking
@@ -185,9 +190,11 @@ evidence. Overall decisions preserve all component decisions; they do not vote
 across pillars. Invalid verdict/citation output is a technical error.
 
 Evidence's verified flag means its document was acquired, not that its claim
-is true. Snippets, reverse-image matches, user metadata/transcripts, and model
-observations are candidates. Decisive assertions need acquired relevant pages
-and exact quotes; geocoding only normalizes an independently grounded place.
+is true. Snippets, reverse-image matches and user metadata/transcripts are
+context or candidates. Pillar facts require acquired relevant pages and exact
+quotes. The verdict agent may also cite keyframe observations for directly visible
+facts, without inferring capture dates, original sources or unobserved context.
+Geocoding only normalizes an independently grounded place.
 Both supporting and refuting evidence survive unresolved conflicts.
 
 Uploader observations may come from fetched platform metadata. Original creator,
