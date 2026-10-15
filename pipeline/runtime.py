@@ -113,7 +113,7 @@ class QwenRuntime:
             )
         tokens = output[0][inputs["input_ids"].shape[-1] :]
         try:
-            print(f"Qwen output tokens: {tokens.tolist()}", flush=True)
+            print(f"Qwen output: {decoder.decode(tokens, skip_special_tokens=True)}", flush=True)
             return _json_object(decoder.decode(tokens, skip_special_tokens=True))
         except ValueError as error:
             print(f"Qwen output decoding error: {error}", flush=True)
