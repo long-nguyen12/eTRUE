@@ -85,6 +85,7 @@ def run_pillar(
             "- Do not output markdown, comments, code fences, or extra text.",
             "- Do not wrap the response in a response_template key.",
             "- Keep every field and root key, including core_assessment when present.",
+            f"- Put observed fields under fields.{pillar} and its assessment under assessments.{pillar}; {pillar} is not a root key.",
             "- field_citations must use literal dotted keys such as pillar.field.",
             "- Do not use nested pillar objects inside field_citations.",
             "",
@@ -93,7 +94,7 @@ def run_pillar(
         ]
     )
     if pillar == "provenance":
-        instructions += "\ncore_assessment is always applicable, separately from provenance applicability."
+        instructions += "\ncore_assessment is a root key, never inside assessments. It is always applicable, separately from provenance applicability."
     result = runtime.generate(
         instructions,
         {
@@ -109,6 +110,24 @@ def run_pillar(
     )
     if not isinstance(result, dict):
         raise ValueError("Pillar agent response must be an object")
+    if pillar in result:
+        fields = result.setdefault("fields", {})
+        if not isinstance(fields, dict):
+            raise ValueError("Pillar fields must be an object")
+        if pillar in fields and json.dumps(fields[pillar], sort_keys=True) != json.dumps(
+            result[pillar], sort_keys=True
+        ):
+            raise ValueError("Conflicting root and fields values for " + pillar)
+        fields[pillar] = result.pop(pillar)
+    if pillar == "provenance" and isinstance(result.get("assessments"), dict):
+        assessments = result["assessments"]
+        if "core_assessment" in assessments:
+            core = assessments["core_assessment"]
+            if "core_assessment" in result and json.dumps(
+                result["core_assessment"], sort_keys=True
+            ) != json.dumps(core, sort_keys=True):
+                raise ValueError("Conflicting root and nested core_assessment")
+            result["core_assessment"] = assessments.pop("core_assessment")
     result.setdefault("field_citations", {})
     if pillar == "provenance":
         result.setdefault("core_assessment", deepcopy(example["core_assessment"]))

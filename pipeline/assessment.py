@@ -25,7 +25,7 @@ from utils.schema import empty_verification
 
 from .agents import PILLAR_PROMPTS, _validate_assessment, run_pillar
 from .evidence import canonical_source, normalized_text, validate_citations
-from .output_schemas import VerdictOutput, validate_output
+from .output_schemas import ApplicableAssessment, VerdictOutput, validate_output
 from .text import plain_explanation
 
 ENUMS = {
@@ -77,7 +77,7 @@ RULES = """
 
 # Assessments
 - Use these statuses: supported, refuted, unknown, not_applicable.
-- supported requires citations that directly establish the assertion.
+- supported requires citations directly establishing the assessed assertion; core must cover the subject, action, and every asserted qualifier.
 - refuted requires citations that directly establish an incompatible fact.
 - Nonmention is not refutation.
 - Topic overlap is insufficient.
@@ -597,6 +597,42 @@ def _build_pipeline_context(store, errors):
     }
 
 
+def _validate_verdict_reviews(raw, results):
+    """Keep prior findings when a single review fails its strict contract."""
+    invalid = {}
+    if isinstance(raw, dict) and isinstance(raw.get("component_verdicts"), list):
+        raw = deepcopy(raw)
+        by_id = {result["component_id"]: result for result in results}
+        for decision in raw["component_verdicts"]:
+            if not isinstance(decision, dict):
+                continue
+            component_id = decision.get("component_id")
+            if not isinstance(component_id, str) or component_id not in by_id:
+                continue
+            reviews = decision.get("assessment_reviews")
+            if not isinstance(reviews, dict):
+                continue
+            result = by_id[component_id]
+            assessments = {
+                "core": result["core_assessment"],
+                **result["pillar_assessments"],
+            }
+            for pillar, assessment in assessments.items():
+                if assessment["status"] == "not_applicable" or pillar not in reviews:
+                    continue
+                try:
+                    reviews[pillar] = validate_output(
+                        ApplicableAssessment, reviews[pillar]
+                    )
+                except ValueError as error:
+                    invalid[component_id, pillar] = str(error)
+                    reviews[pillar] = {
+                        key: deepcopy(assessment[key])
+                        for key in ApplicableAssessment.model_fields
+                    }
+    return validate_output(VerdictOutput, raw), invalid
+
+
 def predict_verdict(
     components, results, store, runtime, errors=None, payload=None, media_analysis=None
 ):
@@ -612,9 +648,6 @@ def predict_verdict(
         findings = {}
         reviews = {}
         for pillar, assessment in assessments.items():
-            statuses = {"supported", "refuted", "unknown"}
-            if pillar not in {"core", "provenance"}:
-                statuses.add("not_applicable")
             findings[pillar] = {
                 key: deepcopy(assessment[key])
                 for key in (
@@ -662,6 +695,7 @@ def predict_verdict(
     data = {
         "agent": "verdict_agent",
         "allowed_verdicts": list(LABEL_COMPOSITION),
+        "allowed_review_statuses": ["supported", "refuted", "unknown"],
         "label_composition": LABEL_COMPOSITION,
         "claim_components": deepcopy(components),
         "results": packets,
@@ -710,7 +744,7 @@ You are verdict_agent. Return only a valid JSON object matching response_templat
 # Evidence policy
 - video_context separates supplied_metadata, transcript, vision_analysis, and platform_metadata.
 - evidence_sources identifies their observations.
-- Use visible facts from vision_analysis or keyframe_analysis only to resolve what is directly visible in the footage.
+- Use visible facts only from supplied vision_analysis or keyframe_analysis; if absent, do not infer visual content.
 - Only visible text or landmarks can ground a place.
 - Appearance does not establish identities, authenticity, capture dates, or source history.
 - Supplied captions, transcripts, OCR assertions, platform metadata, search results, and image matches are not independent proof of external facts.
@@ -722,8 +756,10 @@ You are verdict_agent. Return only a valid JSON object matching response_templat
 - Do not use outside knowledge, external fact-check conclusions, ratings, or inferred intentions.
 
 # Review handling
+- Review status must be exactly supported, refuted, or unknown, as listed in allowed_review_statuses.
 - Keep known supported or refuted findings, or downgrade them to unknown.
 - Never reverse a known supported or refuted finding.
+- supported quotes must establish the assessed assertion; core must cover the subject, action, and every asserted qualifier. Generic topic overlap cannot establish a specific place, date, identity, or this footage.
 - Resolve unknown findings only with directly grounding quotes.
 - Each review must contain status, explanation, supporting_citations, and refuting_citations.
 - Every citation must be:
@@ -731,8 +767,8 @@ You are verdict_agent. Return only a valid JSON object matching response_templat
 - The quote must be an exact substring of the supplied observation.
 - Cite only supplied retained content.
 - Template text, agent opinions, pipeline_context, and errors are not evidence.
-- If supporting and refuting evidence conflict, set status unknown and retain both citation lists.
-- Linked evidence establishing incompatible facts can refute a caption.
+- Exclude topic-only quotes from decisive lists; if quotes establish incompatible facts about the same assertion, set unknown and retain both sides.
+- Evidence linked to this footage establishing an incompatible qualifier can refute a caption even when generic reports overlap its topic.
 - Nonmention, topic overlap, and absence from partial frames cannot refute a caption.
 - Distinguish a wrong caption from missing confirmation.
 
@@ -761,7 +797,7 @@ You are verdict_agent. Return only a valid JSON object matching response_templat
     review_count = sum(len(p["required_reviews"]) for p in packets)
     output_tokens = min(4096, max(2048, 512 + 256 * len(results) + 128 * review_count))
     raw = runtime.generate(instructions, deepcopy(data), max_new_tokens=output_tokens)
-    raw = validate_output(VerdictOutput, raw)
+    raw, invalid_reviews = _validate_verdict_reviews(raw, results)
     available_evidence = {
         e["id"]: {**e, "observation": "\n".join(quoted_evidence[e["id"]])}
         for e in store.items
@@ -813,14 +849,26 @@ You are verdict_agent. Return only a valid JSON object matching response_templat
         for pillar in needed:
             review = reviews[pillar]
             assessment = assessments[pillar]
-            _validate_assessment(review, True)
+            review_error = invalid_reviews.get((result["component_id"], pillar))
             if assessment["status"] in {"supported", "refuted"} and review[
                 "status"
             ] not in {
                 assessment["status"],
                 "unknown",
             }:
-                raise ValueError("Reviews cannot reverse a known finding")
+                review_error = "Reviews cannot reverse a known finding"
+            if review_error:
+                errors.append(
+                    {
+                        "stage": "verdict:review",
+                        "component_id": result["component_id"],
+                        "pillar": pillar,
+                        "message": review_error,
+                    }
+                )
+                component_corrected = True
+                continue
+            _validate_assessment(review, True)
             for side in ("supporting_citations", "refuting_citations"):
                 assessment[side] = _verdict_citations(
                     validate_citations(review[side], store.items),

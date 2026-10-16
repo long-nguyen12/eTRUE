@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import gc
 import json
+import re
 from pathlib import Path
 
 import torch
@@ -16,6 +17,28 @@ CONTEXT_TOKENS = 8192
 
 
 def _json_object(text):
+    text = text.strip().lstrip("\ufeff").strip()
+    if text.startswith("<think>"):
+        end = text.find("</think>")
+        if end < 0:
+            raise ValueError("Model output contains an unfinished thinking block")
+        text = text[end + len("</think>"):].strip()
+    text = text.removeprefix("</think>").strip()
+    starts = [index for index in (text.find("{"), text.find("```")) if index >= 0]
+    start = min(starts) if starts else 0
+    if start > 0:
+        prefix = text[:start].strip()
+        if not re.fullmatch(
+            r"(?:Here is (?:the |your )?)?(?:JSON(?: object| output| response)?|answer|response|output)\s*:",
+            prefix, re.I,
+        ):
+            raise ValueError("Model output contains an invalid JSON prefix")
+        text = text[start:]
+    if text.startswith("```"):
+        block = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.S | re.I)
+        if not block:
+            raise ValueError("Model output contains an incomplete or invalid JSON fence")
+        text = block.group(1).strip()
     return parse_json_object(text)
 
 
@@ -114,7 +137,22 @@ class QwenRuntime:
                 repetition_penalty=1.0,
             )
         tokens = output[0][inputs["input_ids"].shape[-1] :]
-        return _json_object(decoder.decode(tokens, skip_special_tokens=True))
+        decoded = decoder.decode(tokens, skip_special_tokens=True)
+        try:
+            return _json_object(decoded)
+        except ValueError as error:
+            stripped = decoded.strip()
+            format_name = (
+                "empty" if not stripped else
+                "object" if stripped.startswith("{") else
+                "fence" if stripped.startswith("```") else
+                "thinking" if stripped.startswith(("<think>", "</think>")) else
+                "prefixed"
+            )
+            raise ValueError(
+                str(error)[:350] + "; format=" + format_name
+                + "; output_tokens=" + str(len(tokens)) + "/" + str(max_new_tokens)
+            ) from None
 
     def generate(self, instructions: str, data: dict, max_new_tokens=1024) -> dict:
         inputs = self._fit_prompt(instructions, data, max_new_tokens)

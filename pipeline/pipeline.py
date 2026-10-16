@@ -242,6 +242,9 @@ def verify_claim(
         result["status"] = "partial" if errors else "ok"
     except Exception as error:
         errors.append({"stage": stage, "message": str(error)[:500]})
+        result["explanation"] = (
+            "Verification could not be completed because the " + stage + " step failed."
+        )
     finally:
         if owns_runtime and runtime is not None:
             try:

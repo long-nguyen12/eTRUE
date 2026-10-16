@@ -135,6 +135,11 @@ must still be present. Existing citation, applicability and grounding checks
 run after structural validation. Invalid responses report field paths in the
 existing errors array, without retries or raw model logs.
 
+The runtime removes a complete JSON code fence, a closed leading thinking block,
+or a recognized prefix such as "Here is the JSON:" before validation. It does not repair JSON bodies,
+accept truncated objects or choose between multiple JSON values. Parse errors
+include the response format and generated token count, without raw response text.
+
 Each schema exposes model_json_schema(). Validation checks generated output;
 it does not constrain generation tokens or establish the truth of evidence.
 
@@ -153,8 +158,11 @@ Each pillar returns a complete JSON object with fields, field_citations and
 assessments, all keyed by its own pillar name. Provenance also returns a separate
 core_assessment. Each agent receives a response_template containing all defined
 fields and dotted field_citations keys. Nested field citations are flattened when
-their field names are explicit; ambiguous group citations are discarded. Missing
-field_citations defaults to {}, and missing core_assessment remains unknown without
+their field names are explicit; ambiguous group citations are discarded. A missing
+fields wrapper is restored when the response places the same pillar at the root;
+a nested assessments.core_assessment is moved to the root. Conflicting duplicate
+values are rejected. No observed fields or conclusions are invented.
+Missing field_citations defaults to {}, and missing core_assessment remains unknown without
 discarding the other provenance findings. Malformed citation entries are dropped
 without inventing quotes; other invalid response structures are rejected.
 Missing observations remain null or [], while unsupported findings become unknown.
@@ -204,12 +212,16 @@ Keyframe citations can resolve directly visible core/location facts, not capture
 dates, authorship, provenance or original framing. Supplied captions/transcripts
 alone cannot establish the event. No pillar or retrieval step is rerun.
 The response template contains the actual component IDs and required reviews.
-Missing, duplicate or extra IDs/reviews and status reversals are technical errors.
+Review statuses are supported, refuted or unknown. A malformed individual review
+or a reversal of a known finding keeps the prior validated assessment and records
+a verdict:review error; other valid reviews continue and the run becomes partial.
+Missing, duplicate or extra component IDs/review keys remain technical errors.
 Missing or conflicting decisive citations downgrade an assessment to unknown;
 Unsupported verdicts become NEI, with explanations updated to reflect missing evidence.
 Invalid JSON and other structural validation errors propagate without masking the
 original failure.
 Component results are updated only after the entire response passes validation.
+Fatal failures return error/NEI with a nonempty explanation naming the failed step.
 
 Results contain the original/normalized claim, claim_components,
 component_results, overall verdict, explanation, open_questions, citations,
@@ -263,6 +275,9 @@ value stored outside that observation cannot be used as an invented quote.
 
 Known fact-check domains, redirects/canonical URLs, ClaimReview markup and
 visible fact-check/rating signals are excluded before evidence reaches prompts.
+Known fact-check publisher accounts and attributed republications are screened
+as well. Page extraction prefers article content matching the page title and
+rejects title-only, login and platform shells without substantive body text.
 Screening is heuristic: unidentified mirrors can still escape detection.
 Quote validation checks provenance and extraction constraints; semantic
 relevance/entailment still depends on Qwen and warrants review of the evidence.

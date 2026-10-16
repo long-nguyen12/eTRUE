@@ -25,17 +25,27 @@ FACTCHECK_DOMAINS = {
     "factcheck.org",
     "fullfact.org",
     "factcheck.afp.com",
+    "mythdetector.com",
+    "mythdetector.ge",
+    "leadstories.com",
+    "checkyourfact.com",
+}
+FACTCHECK_HANDLES = {
+    "snopes", "politifact", "fullfact", "factcheckorg", "factcheckdotorg",
+    "afpfactcheck", "leadstories", "checkyourfact", "mythdetector",
 }
 FACTCHECK_LABEL = re.compile(
     r"\bfact[\s_-]?check(?:ing|ed|er|ers)?\b|\bclaim\s*review\b",
     re.I,
 )
 FACTCHECK_CONCLUSION = re.compile(
-    r"\b(?:snopes|politifact|full\s*fact|factcheck\.org|lead\s*stories|check\s*your\s*fact)\b",
+    r"\b(?:snopes|politifact|full\s*fact|factcheck\.org|lead\s*stories|"
+    r"check\s*your\s*fact|myth\s*detector)\b",
     re.I,
 )
 RATING_CUE = re.compile(
-    r"\b(?:rated|rating|verdict|conclud(?:ed|es)|debunk(?:ed|s)|determined|false|true|misleading|pants on fire)\b",
+    r"\b(?:rated|rating|verdict|conclud(?:ed|es)|debunk(?:ed|s)|determined|"
+    r"false|true|misleading|pants on fire|fake|hoax|CGI|computer[\s-]+generated|fabricated)\b",
     re.I,
 )
 RATING_MARKER = re.compile(
@@ -46,16 +56,46 @@ RATING_MARKER = re.compile(
     r"(?:(?:mostly|partly|partially)\s+)?(?:true|false|misleading)\b",
     re.I,
 )
+FACTCHECK_ATTRIBUTION = re.compile(
+    r"\b(?:sources?|via|published\s+by|originally\s+(?:published|reported)\s+(?:by|at))"
+    r"\s*[:\-]?\s*(?:https?://)?(?:www\.)?"
+    r"(?:snopes|politifact|full\s*fact|factcheck\.org|lead\s*stories|"
+    r"check\s*your\s*fact|myth\s*detector)\b",
+    re.I,
+)
+PAGE_SHELL = re.compile(
+    r"\b(?:this\s+post\s+is\s+only\s+available\s+in\s+the\s+x\s+app|"
+    r"scan\s+to\s+get\s+app|sensitive\s+content|log\s+in|sign\s+in|sign\s+up|"
+    r"post|youtube|msn|tiktok(?:\s*[-\u2013\u2014]\s*make\s+your\s+day)?)\b",
+    re.I,
+)
 
 
 def is_factcheck_url(url):
     try:
         parsed = urlsplit(str(url or ""))
         host = (parsed.hostname or "").lower().rstrip(".")
+        path = unquote(parsed.path)
+        if host == "web.archive.org":
+            original = re.match(r"/web/[^/]+/(https?://.+)", path)
+            if original:
+                return is_factcheck_url(original.group(1))
+        if host.removeprefix("www.").removeprefix("m.") in {
+            "facebook.com", "x.com", "twitter.com", "tiktok.com",
+            "youtube.com", "instagram.com",
+        }:
+            parts = path.strip("/").split("/")
+            handle = (
+                parts[1] if len(parts) > 1 and parts[0].lower() in {"c", "user", "pages"}
+                else parts[0]
+            )
+            handle = re.sub(r"[^a-z0-9]", "", handle.lower())
+            if handle in FACTCHECK_HANDLES:
+                return True
         return any(
             host == domain or host.endswith("." + domain)
             for domain in FACTCHECK_DOMAINS
-        ) or bool(FACTCHECK_LABEL.search(unquote(parsed.path)))
+        ) or bool(FACTCHECK_LABEL.search(path))
     except ValueError:
         return True
 
@@ -65,7 +105,59 @@ def is_factcheck_text(value):
     return bool(
         FACTCHECK_LABEL.search(text)
         or RATING_MARKER.search(text)
+        or FACTCHECK_ATTRIBUTION.search(text)
         or (FACTCHECK_CONCLUSION.search(text) and RATING_CUE.search(text))
+    )
+
+
+def _page_content(soup, title, description):
+    """Prefer the article matching the page, rather than a related-story card."""
+    ignored = {
+        "this", "that", "with", "from", "have", "will", "when", "what",
+        "news", "video", "watch", "breaking", "latest", "live", "updates",
+    }
+
+    def words(value):
+        return set(re.findall(r"[^\W\d_]{4,}", value.casefold())) - ignored
+
+    targets = words(title) or words(description or "")
+    candidates = soup.find_all(["article", "main"])
+    candidates += soup.find_all(attrs={"itemprop": "articleBody"})
+    if not candidates:
+        candidates = [soup.body or soup]
+
+    def score(node):
+        text = node.get_text(" ", strip=True)
+        headings = node.find_all(["h1", "h2"])
+        heading_match = max(
+            (len(targets & words(tag.get_text(" ", strip=True))) for tag in headings),
+            default=0,
+        )
+        return heading_match, len(targets & words(text[:1500])), -len(text)
+
+    context = max(candidates, key=score)
+    body = context.get_text(" ", strip=True)
+    # Short unrelated cards are not evidence for the requested page.
+    if (
+        targets and len(body) < 300 and context.find(["h1", "h2"])
+        and not targets & words(body)
+    ):
+        return None
+    return body
+
+
+def _meaningful_body(body, title):
+    if not body or _clean(body).casefold() == title.casefold():
+        return False
+    text = PAGE_SHELL.sub(" ", body)
+    text = re.sub(
+        r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|"
+        r"Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b",
+        " ", text, flags=re.I,
+    )
+    return (
+        len(set(re.findall(r"[^\W\d_]{2,}", text.casefold()))) >= 4
+        or len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", text)) >= 12
     )
 
 
@@ -203,17 +295,26 @@ def inspect_page(session, url):
     description = meta("og:description", "description", "twitter:description")
     if is_factcheck_text(description):
         return None
+    for name in ("og:site_name", "author", "article:author"):
+        publisher = meta(name)
+        if publisher:
+            publisher_url = publisher if public_http_url(publisher) else "https://" + publisher
+            if (
+                re.sub(r"[^a-z0-9]", "", publisher.lower()) in FACTCHECK_HANDLES
+                or is_factcheck_url(publisher_url)
+            ):
+                return None
     for tag in soup.find_all(
         ["script", "style", "noscript", "nav", "footer", "header", "form"]
     ):
         tag.decompose()
-    context = soup.find("article") or soup.find("main") or soup.body or soup
-    body_text = context.get_text(" ", strip=True)
-    if is_factcheck_text(body_text):
+    body_text = _page_content(soup, title, description)
+    if (
+        not body_text or is_factcheck_text(body_text)
+        or not _meaningful_body(body_text, title)
+    ):
         return None
     body = _clean(body_text)
-    if not body and not title and not description:
-        return None
     return {
         "source": _url_key(canonical_url),
         "original_url": url,
@@ -405,14 +506,16 @@ def collect_evidence(payload, components, media, store, errors):
                 _error(errors, "retrieval.search", error)
                 continue
             for item in results or []:
-                page = page_for(item.get("url"))
                 observation = _clean(
                     " ".join(
                         str(item.get(field) or "") for field in ("title", "description")
                     ),
                     1000,
                 )
-                if page and observation and not is_factcheck_text(observation):
+                if is_factcheck_text(observation):
+                    continue
+                page = page_for(item.get("url"))
+                if page and observation:
                     store.add(
                         "search_candidate",
                         page["source"],
@@ -433,8 +536,10 @@ def collect_evidence(payload, components, media, store, errors):
                 for message in image_search.get("errors") or []:
                     _error(errors, "retrieval.image", message)
                 for item in image_search.get("pages") or []:
+                    if is_factcheck_text(item.get("title")):
+                        continue
                     page = page_for(item.get("url"))
-                    if page and not is_factcheck_text(item.get("title")):
+                    if page:
                         store.add(
                             "image_candidate",
                             page["source"],
