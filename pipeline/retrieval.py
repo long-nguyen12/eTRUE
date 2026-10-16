@@ -480,7 +480,7 @@ def collect_evidence(payload, components, media, store, errors):
     try:
         post_url = payload.get("post_url")
         post_page = page_for(post_url, purpose="metadata") if post_url else None
-        print(f"Post page for {post_url}: {post_page}", flush=True)
+        print(f"Post page for {post_url}", flush=True)
         post_allowed = bool(post_page) or (
             public_http_url(post_url) and not is_factcheck_url(post_url)
             and _url_key(post_url) in failed
@@ -490,6 +490,7 @@ def collect_evidence(payload, components, media, store, errors):
             if post_url not in archive_urls:
                 archive_urls.insert(0, post_url)
             uploader_name, uploader_profile = extract_uploader_from_url(post_url)
+            print(f"Extracted uploader from URL: {uploader_name}, {uploader_profile}", flush=True)
             uploader_metadata = {
                 field: value
                 for field, value in (
