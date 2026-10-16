@@ -194,6 +194,15 @@ do not rewrite the pillar's extracted verification fields.
 Independent reports can establish the asserted event and its documented date
 without visual confirmation in keyframes. Event truth and video provenance are
 assessed separately; uncertain provenance does not invalidate an event report.
+Each component decision includes provenance_required. The verdict agent sets it
+false when the claim does not assert media creation, authenticity, original source,
+publication history or reuse. An unknown provenance then remains in the pillar
+results but does not veto the verdict or supply decisive verdict citations.
+The default is true when the flag is omitted. Core still checks the whole claim,
+including footage identity when the claim is about what this particular video shows.
+Keyframe citations can resolve directly visible core/location facts, not capture
+dates, authorship, provenance or original framing. Supplied captions/transcripts
+alone cannot establish the event. No pillar or retrieval step is rerun.
 The response template contains the actual component IDs and required reviews.
 Missing, duplicate or extra IDs/reviews and status reversals are technical errors.
 Missing or conflicting decisive citations downgrade an assessment to unknown;
@@ -227,7 +236,8 @@ The verdict agent judges the substance and importance of assertions, not counts 
 pillars/components. Established minor errors may still yield TRUE as Mostly True;
 material false assertions, including Mixture, yield FALSE. Uncertainty alone is not
 FALSE or a proven mixture. TRUE needs a supported core assertion and no unresolved
-assessments; FALSE needs a grounded refutation. The agent judges whether established
+required assessments; FALSE needs a grounded refutation of a required assessment.
+Unknown provenance blocks TRUE only when provenance_required is true. The agent judges whether established
 errors are minor or material. Decisive quotes are always checked.
 Completed verifications returning NEI include open_questions. The status field
 independently describes execution success or failure. Original per-record dataset

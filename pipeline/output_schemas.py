@@ -149,6 +149,7 @@ class ComponentVerdict(OutputModel):
     component_id: NonemptyString
     verdict: VerdictLabel
     explanation: str
+    provenance_required: bool = True
     assessment_reviews: dict[ReviewName, ApplicableAssessment]
 
 
