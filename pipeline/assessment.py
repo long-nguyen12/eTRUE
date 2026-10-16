@@ -25,6 +25,7 @@ from utils.schema import empty_verification
 
 from .agents import PILLAR_PROMPTS, _validate_assessment, run_pillar
 from .evidence import canonical_source, normalized_text, validate_citations
+from .output_schemas import VerdictOutput, validate_output
 from .text import plain_explanation
 
 ENUMS = {
@@ -626,6 +627,7 @@ open question; otherwise [] is allowed.
     review_count = sum(len(p["required_reviews"]) for p in packets)
     output_tokens = min(4096, max(2048, 512 + 256 * len(results) + 128 * review_count))
     raw = runtime.generate(instructions, deepcopy(data), max_new_tokens=output_tokens)
+    raw = validate_output(VerdictOutput, raw)
     available_evidence = {
         e["id"]: {**e, "observation": "\n".join(quoted_evidence[e["id"]])}
         for e in store.items
@@ -641,19 +643,10 @@ open question; otherwise [] is allowed.
     available_evidence.update(
         {e["id"]: e for e in store.items if e["id"] in runtime.last_evidence_ids}
     )
-    if not isinstance(raw, dict) or set(raw) != set(data["response_template"]):
-        raise ValueError("Verdict response must match response_template")
     decisions = raw["component_verdicts"]
-    decision_keys = {"component_id", "verdict", "explanation", "assessment_reviews"}
-    if not isinstance(decisions, list) or not all(
-        isinstance(d, dict) and set(d) == decision_keys for d in decisions
-    ):
-        raise ValueError("Component decisions must match response_template")
     ids = [d["component_id"] for d in decisions]
     expected = [c["id"] for c in components]
-    if not all(isinstance(value, str) for value in ids) or (
-        len(ids) != len(expected) or len(set(ids)) != len(ids) or set(ids) != set(expected)
-    ):
+    if len(ids) != len(expected) or len(set(ids)) != len(ids) or set(ids) != set(expected):
         raise ValueError("Return exactly one decision per claim component")
     by_id = {d["component_id"]: d for d in decisions}
     reviewed = deepcopy(results)
@@ -670,7 +663,7 @@ open question; otherwise [] is allowed.
             if assessment["status"] != "not_applicable"
         }
         reviews = decision["assessment_reviews"]
-        if not isinstance(reviews, dict) or set(reviews) != needed:
+        if set(reviews) != needed:
             raise ValueError(
                 "Assessment reviews do not match required_reviews for "
                 + result["component_id"]
@@ -730,8 +723,6 @@ open question; otherwise [] is allowed.
         overall == "TRUE" and any(r["verdict"] == "NEI" for r in reviewed)
     ):
         overall = "NEI"
-    if not isinstance(raw["open_questions"], list):
-        raise ValueError("open_questions must be a list of plain text strings")
     questions = [plain_explanation(q) for q in raw["open_questions"]]
     if overall == "NEI" and not questions:
         error_pillars = data["pipeline_context"]["pillar_errors"]

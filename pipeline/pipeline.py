@@ -6,6 +6,7 @@ from utils.files import now
 from .assessment import analyze_component, predict_verdict
 from .evidence import EvidenceStore
 from .media import prepare_media
+from .output_schemas import ClaimNormalizationOutput, validate_output
 from .retrieval import collect_evidence
 from .runtime import QwenRuntime
 
@@ -56,32 +57,22 @@ def validate_payload(payload, base_dir=None):
 
 def _normalize_claim(runtime, claim):
     raw = runtime.generate(NORMALIZE_PROMPT, {"claim": claim}, max_new_tokens=2048)
-    if not isinstance(raw, dict) or set(raw) != {"normalized_claim", "claim_components"}:
-        raise ValueError("Claim normalization must contain normalized_claim and claim_components")
-    normalized = raw.get("normalized_claim")
-    components = raw.get("claim_components")
+    raw = validate_output(ClaimNormalizationOutput, raw)
+    normalized = raw["normalized_claim"]
+    components = raw["claim_components"]
     expected = " ".join(claim.split())
-    if not isinstance(normalized, str) or " ".join(normalized.split()) != expected:
+    if " ".join(normalized.split()) != expected:
         raise ValueError("normalized_claim must preserve the claim exactly apart from whitespace")
     normalized = expected
-    if not isinstance(components, list) or not components:
-        raise ValueError("claim_components must be a nonempty list")
     output = []
     for index, component in enumerate(components, 1):
-        if not isinstance(component, dict) or set(component) != {"text", *DIMENSIONS}:
-            raise ValueError("Each claim component must contain text and all six dimensions")
-        text = component["text"]
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("Claim component text must be a nonempty string")
-        text = " ".join(text.split())
+        text = " ".join(component["text"].split())
         if text not in normalized:
             raise ValueError("Claim component text must be an exact passage from normalized_claim")
         row = {"id": "claim_" + str(index), "text": text}
         for dimension in DIMENSIONS:
             value = component[dimension]
             if value is not None:
-                if not isinstance(value, str) or not value.strip():
-                    raise ValueError("Claim dimension " + dimension + " must be a nonempty string or null")
                 value = " ".join(value.split())
                 if value not in normalized:
                     raise ValueError("Claim dimension " + dimension + " must be copied from the claim")

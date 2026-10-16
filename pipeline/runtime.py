@@ -9,14 +9,14 @@ import torch
 from transformers import AutoModelForMultimodalLM, AutoTokenizer
 from stages import MODELS
 from stages.vision import VISION_PROMPT, evenly_spaced, normalize_vision_analysis
-from utils.model_output import parse_json_output
+
+from .output_schemas import VisionOutput, parse_json_object, validate_output
 
 CONTEXT_TOKENS = 8192
 
 
 def _json_object(text):
-    result = parse_json_output(text)
-    return result
+    return parse_json_object(text)
 
 
 def _evidence_ids(items):
@@ -114,11 +114,7 @@ class QwenRuntime:
                 repetition_penalty=1.0,
             )
         tokens = output[0][inputs["input_ids"].shape[-1] :]
-        try:
-            print(f"Qwen output: {decoder.decode(tokens, skip_special_tokens=True)}", flush=True)
-            return _json_object(decoder.decode(tokens, skip_special_tokens=True))
-        except ValueError as error:
-            print(f"Qwen output decoding error: {error}", flush=True)
+        return _json_object(decoder.decode(tokens, skip_special_tokens=True))
 
     def generate(self, instructions: str, data: dict, max_new_tokens=1024) -> dict:
         inputs = self._fit_prompt(instructions, data, max_new_tokens)
@@ -166,7 +162,7 @@ class QwenRuntime:
                 return_tensors="pt",
             )
             raw = self._generate(inputs, self.processor, 512)
-            analysis = normalize_vision_analysis(raw)
+            analysis = validate_output(VisionOutput, normalize_vision_analysis(raw))
             return {
                 **analysis,
                 "status": "ok",

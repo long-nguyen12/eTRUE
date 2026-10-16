@@ -8,6 +8,12 @@ from pillars.provenance import PROVENANCE_STATUSES
 from pillars.source import SOURCE_TYPES
 from utils.schema import empty_verification
 
+from .output_schemas import (
+    ApplicableAssessment,
+    Assessment,
+    pillar_output_model,
+    validate_output,
+)
 from .text import plain_explanation
 
 ENUMS = {
@@ -85,45 +91,20 @@ def run_pillar(
     result.setdefault("field_citations", {})
     if pillar == "provenance":
         result.setdefault("core_assessment", deepcopy(example["core_assessment"]))
-    if set(result) != set(example):
-        raise ValueError("Pillar agent response must contain exactly " + ", ".join(example))
-    for key in ("fields", "field_citations", "assessments"):
-        if not isinstance(result[key], dict):
-            raise ValueError(key + " must be an object")
-    if set(result["fields"]) != {pillar} or set(result["assessments"]) != {pillar}:
-        raise ValueError("fields and assessments must contain only " + pillar)
-    fields = result["fields"][pillar]
-    if not isinstance(fields, dict) or set(fields) != set(defaults):
-        raise ValueError(pillar + " fields must contain every defined field and no others")
-    for field, value in fields.items():
-        if field == "verified_coordinates" and value is not None:
-            raise ValueError("verified_coordinates must remain null for geocoding")
-        if value is None:
-            if isinstance(defaults[field], list):
-                raise ValueError(pillar + "." + field + " must be a list")
-            continue
-        if isinstance(defaults[field], list):
-            valid = isinstance(value, list) and all(isinstance(v, (str, dict)) for v in value)
-        elif field in {"provenance_mismatch", "source_is_uploader", "source_mismatch"}:
-            valid = isinstance(value, bool)
-        else:
-            valid = isinstance(value, str)
-        if not valid:
-            raise ValueError(pillar + "." + field + " has an invalid type")
-    nested = result["field_citations"].pop(pillar, {})
-    if isinstance(nested, dict):
-        for field, citations in nested.items():
-            path = pillar + "." + field
-            if not result["field_citations"].get(path):
-                result["field_citations"][path] = citations
-    for path, citations in result["field_citations"].items():
-        if path not in {pillar + "." + field for field in defaults}:
-            raise ValueError("Unknown field citation path: " + str(path))
-        result["field_citations"][path] = _validate_citation_shape(citations)
-    _validate_assessment(result["assessments"][pillar], applicable)
+    if isinstance(result["field_citations"], dict):
+        nested = result["field_citations"].pop(pillar, {})
+        if isinstance(nested, dict):
+            for field, citations in nested.items():
+                path = pillar + "." + field
+                if not result["field_citations"].get(path):
+                    result["field_citations"][path] = citations
+        for path, citations in result["field_citations"].items():
+            result["field_citations"][path] = _validate_citation_shape(citations)
+    if isinstance(result.get("assessments"), dict) and pillar in result["assessments"]:
+        _validate_assessment(result["assessments"][pillar], applicable)
     if pillar == "provenance":
         _validate_assessment(result["core_assessment"], True)
-    return result
+    return validate_output(pillar_output_model(pillar), result)
 
 
 def _validate_citation_shape(citations):
@@ -151,12 +132,11 @@ def _validate_assessment(assessment, applicable):
             explanation="The claim does not assert this dimension.",
             supporting_citations=[], refuting_citations=[],
         )
-    statuses = {"supported", "refuted", "unknown"} if applicable else {"not_applicable"}
-    if not isinstance(assessment["status"], str) or assessment["status"] not in statuses:
-        raise ValueError("Invalid assessment status for pillar applicability")
-    assessment["explanation"] = plain_explanation(assessment["explanation"])
     for key in ("supporting_citations", "refuting_citations"):
         assessment[key] = _validate_citation_shape(assessment[key])
+    validated = validate_output(ApplicableAssessment if applicable else Assessment, assessment)
+    validated["explanation"] = plain_explanation(validated["explanation"])
+    assessment.update(validated)
 
 
 PILLAR_PROMPTS = {

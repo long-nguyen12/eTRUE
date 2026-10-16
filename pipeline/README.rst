@@ -127,6 +127,17 @@ The Python batch API is::
 Results and evidence
 --------------------
 
+Qwen responses must be complete JSON objects. Pydantic v2 schemas in
+pipeline/output_schemas.py validate claim normalization, normalized vision
+observations, five pillar responses and verdicts. They reject extra fields,
+wrong types, invalid labels and non-finite numbers. Nullable required fields
+must still be present. Existing citation, applicability and grounding checks
+run after structural validation. Invalid responses report field paths in the
+existing errors array, without retries or raw model logs.
+
+Each schema exposes model_json_schema(). Validation checks generated output;
+it does not constrain generation tokens or establish the truth of evidence.
+
 Provenance, Source, Date, Location and Motivation each have a separate agent
 prompt. They assess each claim component independently using a shared frozen
 evidence store; no pillar agent receives another agent's conclusions. The

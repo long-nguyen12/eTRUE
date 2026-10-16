@@ -5,6 +5,7 @@ numpy==2.3.5; python_version >= "3.13"
 Pillow==11.2.1
 # Qwen3.5 support in Transformers 5.x requires Python 3.10 or newer.
 transformers==5.17.0
+pydantic>=2.8,<3
 accelerate==1.8.1
 sentencepiece==0.2.0; python_version < "3.13"
 sentencepiece==0.2.1; python_version >= "3.13"
