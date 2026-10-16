@@ -149,10 +149,18 @@ evidence store; no pillar agent receives another agent's conclusions. The
 Provenance agent also assesses the core event. Existing pillar rules and quote
 validators check each agent's output before synthesis.
 
+Before the agents run, fetched metadata for the requested post fills uploader,
+profile and upload-date fields with evidence links. Matching archive records fill
+earliest_online_date. These observations survive null or conflicting model fields;
+they do not establish the creator, capture date or original context. URL-derived
+uploader leads without an acquired post remain unverified evidence.
+
 Normalization preserves the original claim apart from whitespace. Component text
 and dimensions copy source phrases; collective actions and linked assertions stay
 together when splitting would change their meaning. Empty or malformed components
 are technical errors rather than silently omitted claims.
+For date-rule comparisons, leading in/on/at is removed only when the remaining
+calendar date parses. The original component time stays unchanged.
 
 Each pillar returns a complete JSON object with fields, field_citations and
 assessments, all keyed by its own pillar name. Provenance also returns a separate
@@ -266,6 +274,10 @@ quotes. The verdict agent may also cite keyframe observations for directly visib
 facts, without inferring capture dates, original sources or unobserved context.
 Geocoding only normalizes an independently grounded place.
 Both supporting and refuting evidence survive unresolved conflicts.
+Failed or inconclusive geocoding preserves an existing grounded location mismatch.
+If an agent omits verified_location, one complete accepted location quote may supply
+it through the existing pillar rules; separate quotes are never joined to infer a
+contrast, and the claim's location is preserved.
 
 Uploader observations may come from fetched platform metadata. Original creator,
 media provenance, capture/event date, verified location and original context need
@@ -278,13 +290,22 @@ visible fact-check/rating signals are excluded before evidence reaches prompts.
 Known fact-check publisher accounts and attributed republications are screened
 as well. Page extraction prefers article content matching the page title and
 rejects title-only, login and platform shells without substantive body text.
+Metadata extraction can use a screened shell without adding it as a retrieved page.
+HTTP failures still attempt the metadata helper, while unscreened rich metadata is
+withheld. Metadata, web, social and image retrieval have separate bounded inspection
+budgets. The original post is also considered for archive lookup without a page body.
+Acquired page observations label author, site name and publication dates explicitly;
+publication dates are not capture dates. Empty OCR does not generate search queries.
 Screening is heuristic: unidentified mirrors can still escape detection.
 Quote validation checks provenance and extraction constraints; semantic
 relevance/entailment still depends on Qwen and warrants review of the evidence.
 
 Text prompts reserve generated tokens within an 8192-token budget. Whole
 evidence items are selected without truncating the claim. An oversized non-evidence
-input is an explicit error. Relative dates without reference context and capture
+input is an explicit error. Pillar inputs prioritize platform metadata, vision and
+archive observations. An evidence item that cannot fit is skipped while later items
+are still considered; last_evidence_ids records exactly the selected items.
+Relative dates without reference context and capture
 dates less precise than the claim cannot receive a supported date assessment.
 Normalization and pillar calls reserve 2048 output tokens. Vision reserves 512 and
 returns seven observation fields with short literal OCR/clues. Aggregation reserves

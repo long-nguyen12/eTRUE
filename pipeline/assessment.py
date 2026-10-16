@@ -1,5 +1,6 @@
 from copy import deepcopy
 import json
+import re
 
 from pillars.date import (
     DATE_GRANULARITIES,
@@ -206,6 +207,11 @@ def _copy_fields(extra, raw, group, evidence):
             value = values.get(field)
             if field in CLAIM_FIELDS or value is None:
                 continue
+            if (
+                field in {"uploader_name", "uploader_profile", "video_upload_date", "earliest_online_date"}
+                and extra["verification"][pillar][field] is not None
+            ):
+                continue
             path = pillar + "." + field
             candidates = field in {
                 "near_duplicate_matches",
@@ -248,6 +254,60 @@ def _copy_fields(extra, raw, group, evidence):
             ]
 
 
+def _seed_observations(extra, evidence, post_url):
+    if not post_url:
+        return
+    aliases = {canonical_source(post_url)}
+    for item in evidence:
+        if item["type"] != "platform_metadata" or not item.get("verified"):
+            continue
+        urls = [
+            item.get(key)
+            for key in ("requested_url", "source", "final_url", "canonical_url")
+        ]
+        if not any(url and canonical_source(url) in aliases for url in urls):
+            continue
+        aliases.update(canonical_source(url) for url in urls if url)
+        try:
+            metadata = json.loads(item["observation"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        for key, pillar, field in (
+            ("uploader_name", "source", "uploader_name"),
+            ("uploader_profile", "source", "uploader_profile"),
+            ("upload_date", "date", "video_upload_date"),
+        ):
+            value = metadata.get(key)
+            citations = [{"evidence_id": item["id"], "quote": item["observation"]}]
+            if _grounded_value(field, value, citations, [item]):
+                extra["verification"][pillar][field] = value
+                extra["field_evidence"]["verification." + pillar + "." + field] = [item["id"]]
+    for item in evidence:
+        archive = item.get("archive") or {}
+        if (
+            item["type"] != "archive_record" or not item.get("verified")
+            or not archive.get("url") or canonical_source(archive["url"]) not in aliases
+        ):
+            continue
+        date = archive.get("date")
+        if not date_is_grounded(date, item["observation"]):
+            continue
+        current = extra["verification"]["date"].get("earliest_online_date")
+        if current is None or _parse_date_value(date).start < _parse_date_value(current).start:
+            extra["verification"]["date"]["earliest_online_date"] = date
+            extra["field_evidence"]["verification.date.earliest_online_date"] = [item["id"]]
+
+
+def _calendar_date(value):
+    if not isinstance(value, str):
+        return value
+    candidate = re.sub(r"^(?:in|on|at)\s+", "", value.strip(), flags=re.I)
+    parsed = _parse_date_value(candidate)
+    return parsed.normalized if parsed else value
+
+
 def _geocode(extra, store, errors):
     import requests
 
@@ -284,17 +344,19 @@ def _geocode(extra, store, errors):
                     extra["field_evidence"][
                         "verification.location.verified_coordinates"
                     ] = [evidence_id]
-        location["location_mismatch_type"] = classify_location_mismatch(
+        mismatch = classify_location_mismatch(
             location.get("claimed_location"),
             location.get("verified_location"),
             rows.get("claimed"),
             rows.get("verified"),
         )
+        if mismatch not in {None, "unknown"} or not location.get("location_mismatch_type"):
+            location["location_mismatch_type"] = mismatch
 
 
 def analyze_component(component, store, runtime, errors, media_reference=None):
     verification = empty_verification()
-    verification["date"]["claimed_date"] = component.get("time")
+    verification["date"]["claimed_date"] = _calendar_date(component.get("time"))
     verification["location"]["claimed_location"] = component.get("location")
     verification["motivation"]["claimed_framing"] = component["text"]
     extra = {
@@ -302,6 +364,7 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
         "field_evidence": {},
         "evidence": store.items,
     }
+    _seed_observations(extra, store.items, (media_reference or {}).get("post_url"))
     applicable = {
         "provenance": True,
         "source": bool(component.get("attribution")),
@@ -313,7 +376,13 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
     core = empty_assessment()
     failed_pillars = {}
     claimed_fields = deepcopy(verification)
-    shared_evidence = deepcopy(sorted(store.items, key=lambda e: not e.get("verified")))
+    priorities = {
+        "platform_metadata": 0, "keyframe_analysis": 1,
+        "archive_record": 2, "retrieved_page": 3,
+    }
+    shared_evidence = deepcopy(sorted(
+        store.items, key=lambda e: (priorities.get(e["type"], 4), not e.get("verified"))
+    ))
     for pillar in PILLAR_PROMPTS:
         try:
             raw = run_pillar(
@@ -355,7 +424,19 @@ def analyze_component(component, store, runtime, errors, media_reference=None):
     apply_provenance_rules(verification)
     apply_source_rules(extra, grounded, None, [])
     apply_date_rules(verification)
-    # Claimed/verified places already passed citation checks; do not run article contrast extraction.
+    location = verification["location"]
+    location_citations = (
+        assessments["location"]["supporting_citations"]
+        + assessments["location"]["refuting_citations"]
+    )
+    if not location["verified_location"] and len(location_citations) == 1:
+        citation = location_citations[0]
+        inferred = {"verification": deepcopy(verification), "field_evidence": {}}
+        apply_location_rules(inferred, citation["quote"], [citation["evidence_id"]])
+        place = inferred["verification"]["location"]["verified_location"]
+        if place:
+            location["verified_location"] = place
+            extra["field_evidence"]["verification.location.verified_location"] = [citation["evidence_id"]]
     apply_location_rules(extra, "", [])
     clean_visual_location_candidates(verification)
     _geocode(extra, store, errors)

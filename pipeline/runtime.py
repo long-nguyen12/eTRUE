@@ -92,8 +92,11 @@ class QwenRuntime:
     def _fit_prompt(self, instructions, data, max_new_tokens):
         selected = copy.deepcopy(data)
         evidence = selected.get("evidence", [])
+        if "evidence" in selected:
+            selected["evidence"] = []
         self.last_evidence_ids = []
-        while True:
+
+        def encode():
             messages = [
                 {
                     "role": "system",
@@ -109,13 +112,20 @@ class QwenRuntime:
                 add_generation_prompt=True,
                 enable_thinking=False,
             )
-            inputs = self.tokenizer(prompt, return_tensors="pt", truncation=False)
-            if inputs["input_ids"].shape[-1] + max_new_tokens <= CONTEXT_TOKENS:
-                self.last_evidence_ids = _evidence_ids(evidence)
-                return inputs
-            if not evidence:
-                raise ValueError("Claim and non-evidence context exceed the 8192-token budget")
-            evidence.pop()
+            return self.tokenizer(prompt, return_tensors="pt", truncation=False)
+
+        inputs = encode()
+        if inputs["input_ids"].shape[-1] + max_new_tokens > CONTEXT_TOKENS:
+            raise ValueError("Claim and non-evidence context exceed the 8192-token budget")
+        for item in evidence:
+            selected["evidence"].append(item)
+            candidate = encode()
+            if candidate["input_ids"].shape[-1] + max_new_tokens <= CONTEXT_TOKENS:
+                inputs = candidate
+            else:
+                selected["evidence"].pop()
+        self.last_evidence_ids = _evidence_ids(selected.get("evidence", []))
+        return inputs
 
     def _generate(self, inputs, decoder, max_new_tokens):
         inputs = inputs.to(self.device)

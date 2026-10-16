@@ -35,7 +35,7 @@ def run_pillar(
     runtime, pillar, *, rules, component, applicable, claimed_fields, media, evidence
 ):
     name = pillar + "_agent"
-    defaults = empty_verification()[pillar]
+    defaults = {**empty_verification()[pillar], **deepcopy(claimed_fields)}
     assessment = {
         "status": "unknown" if applicable else "not_applicable",
         "explanation": (
@@ -75,6 +75,7 @@ def run_pillar(
             f"- If applicable_pillars.{pillar} is false, set the assessment status to not_applicable and leave citation lists empty.",
             "- Otherwise, set status to supported, refuted, or unknown.",
             "- Copy claimed fields exactly from claimed_fields. Do not invent or normalize claimed values unless the rules explicitly allow it.",
+            "- Preserve prefilled uploader and online-availability observations; these do not establish creator, capture date, or original context.",
             "- Unknown facts are null. Absent lists are [].",
             "- Cite observed fields and decisive findings using the shared citation rules.",
             "- Do not invent evidence_id values or quotes.",
@@ -223,7 +224,7 @@ PILLAR_PROMPTS = {
         "- Extract video_upload_date only from platform_metadata observations.\n"
         "- Extract earliest_online_date only from archive_record observations.\n"
         "- Upload, archive, and publication dates establish availability, not capture.\n"
-        "- Do not use upload, archive, or publication dates as estimated_date unless they directly prove capture.\n"
+        "- Use publication dates as estimated_date only when the page explicitly dates the asserted event; upload and archive dates alone cannot establish event or capture dates.\n"
         "- Preserve the actual capture_date_granularity. Do not invent precision.\n"
         "- date_mismatch_type=same requires evidence at least as precise as claimed_date.\n"
         "- If the evidence is only coarsely compatible, keep the date assessment unknown.\n"

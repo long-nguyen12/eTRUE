@@ -14,7 +14,7 @@ from stages.search_clients import (
     google_image_matches,
     select_keyframes,
 )
-from stages.web import wayback_earliest
+from stages.web import extract_uploader_from_url, wayback_earliest
 from utils.json_ld import _date_value, json_ld_nodes, public_http_url
 from utils.media_metadata import CORE_METADATA_FIELDS, extract_media
 from utils.ytdlp import cookie_file_from_env
@@ -194,7 +194,7 @@ def _error(errors, stage, error):
     errors.append({"stage": stage, "message": message})
 
 
-def inspect_page(session, url):
+def inspect_page(session, url, *, require_body=True):
     if not public_http_url(url) or is_factcheck_url(url):
         return None
     response = session.get(url, timeout=20, allow_redirects=True, stream=True)
@@ -261,15 +261,18 @@ def inspect_page(session, url):
     )
     if is_factcheck_text(title + " " + headers):
         return None
-    if re.search(
+    access_challenge = re.search(
         r"access denied|captcha|just a moment|attention required|sign in to continue",
         title,
         re.I,
-    ):
+    )
+    if access_challenge and require_body:
         return None
     published_at = _date_value(
         meta("article:published_time", "datePublished", "uploadDate", "date", "pubdate")
     )
+    author = meta("author", "article:author")
+    site_name = meta("og:site_name")
     for script in soup.find_all(
         "script", attrs={"type": re.compile(r"ld\+json", re.I)}
     ):
@@ -292,11 +295,15 @@ def inspect_page(session, url):
             published_at = published_at or _date_value(
                 node.get("datePublished") or node.get("uploadDate")
             )
+            node_author = node.get("author")
+            if not author and isinstance(node_author, str):
+                author = _clean(node_author)
+            elif not author and isinstance(node_author, dict):
+                author = _clean(node_author.get("name")) or None
     description = meta("og:description", "description", "twitter:description")
     if is_factcheck_text(description):
         return None
-    for name in ("og:site_name", "author", "article:author"):
-        publisher = meta(name)
+    for publisher in (site_name, author, meta("article:author")):
         if publisher:
             publisher_url = publisher if public_http_url(publisher) else "https://" + publisher
             if (
@@ -304,17 +311,18 @@ def inspect_page(session, url):
                 or is_factcheck_url(publisher_url)
             ):
                 return None
+    if is_factcheck_text(soup.get_text(" ", strip=True)):
+        return None
     for tag in soup.find_all(
         ["script", "style", "noscript", "nav", "footer", "header", "form"]
     ):
         tag.decompose()
     body_text = _page_content(soup, title, description)
-    if (
-        not body_text or is_factcheck_text(body_text)
-        or not _meaningful_body(body_text, title)
-    ):
+    if is_factcheck_text(body_text):
         return None
-    body = _clean(body_text)
+    body = _clean(body_text) if not access_challenge and _meaningful_body(body_text, title) else ""
+    if require_body and not body:
+        return None
     return {
         "source": _url_key(canonical_url),
         "original_url": url,
@@ -324,6 +332,8 @@ def inspect_page(session, url):
         "description": description,
         "body": body,
         "published_at": published_at,
+        "author": author,
+        "site_name": site_name,
         "raw_html": html,
     }
 
@@ -347,7 +357,7 @@ class _ReplayResponse:
 
 class _MetadataSession:
     def __init__(self, page):
-        self.page = page
+        self.page = page or {}
         from utils.utils import normalize_social_url
 
         allowed = set()
@@ -386,6 +396,8 @@ def build_queries(payload, components, media):
     queries = []
     for value in values:
         if isinstance(value, (dict, list)):
+            if not value:
+                continue
             value = json.dumps(value, ensure_ascii=False)
         text = " ".join(_clean(value).replace('"', "").split()[:30])
         if text and text.casefold() not in {query.casefold() for query in queries}:
@@ -410,9 +422,12 @@ def collect_evidence(payload, components, media, store, errors):
     session.headers["User-Agent"] = "eTRUE-verification/1.0"
     pages = {}
     inspected = set()
+    failed = set()
+    attempts = {"metadata": 0, "web": 0, "social": 0, "image": 0}
+    limits = {"metadata": 4, "web": 6, "social": 4, "image": 4}
     archive_urls = []
 
-    def page_for(url):
+    def page_for(url, *, purpose="web"):
         if not public_http_url(url) or is_factcheck_url(url):
             print(f"Skipping page_for({url}): not public or is factcheck", flush=True)
             return None
@@ -420,13 +435,15 @@ def collect_evidence(payload, components, media, store, errors):
         if key in inspected:
             print(f"Skipping page_for({url}): already inspected", flush=True)
             return pages.get(key)
-        if len(inspected) >= 10:
+        if attempts[purpose] >= limits[purpose]:
             print(f"Skipping page_for({url}): inspected limit reached", flush=True)
             return None
         inspected.add(key)
+        attempts[purpose] += 1
         try:
-            page = inspect_page(session, url)
+            page = inspect_page(session, url, require_body=False)
         except Exception as error:
+            failed.add(key)
             print(f"Error inspecting page {url}: {error}", flush=True)
             _error(errors, "retrieval.page", error)
             return None
@@ -434,40 +451,79 @@ def collect_evidence(payload, components, media, store, errors):
             return None
         pages[key] = page
         source = page["source"]
-        if source not in archive_urls:
-            archive_urls.append(source)
+        if page["body"]:
+            if source not in archive_urls:
+                archive_urls.append(source)
+            observation = page["body"]
+            for label, field in (
+                ("Page author", "author"),
+                ("Site name", "site_name"),
+                ("Publication date (not capture date)", "published_at"),
+            ):
+                if page.get(field):
+                    observation += "\n" + label + ": " + str(page[field])
             store.add(
                 "retrieved_page",
                 source,
-                page["body"] or page["description"] or page["title"],
+                observation,
                 method="http",
                 published_at=page["published_at"],
                 verified=True,
                 title=page["title"],
                 final_url=page["final_url"],
                 canonical_url=page["canonical_url"],
+                author=page.get("author"),
+                site_name=page.get("site_name"),
             )
         return page
 
     try:
         post_url = payload.get("post_url")
-        post_page = page_for(post_url) if post_url else None
+        post_page = page_for(post_url, purpose="metadata") if post_url else None
         print(f"Post page for {post_url}: {post_page}", flush=True)
-        if post_page:
+        post_allowed = bool(post_page) or (
+            public_http_url(post_url) and not is_factcheck_url(post_url)
+            and _url_key(post_url) in failed
+        )
+        uploader_metadata = {}
+        if post_allowed:
+            if post_url not in archive_urls:
+                archive_urls.insert(0, post_url)
+            uploader_name, uploader_profile = extract_uploader_from_url(post_url)
+            uploader_metadata = {
+                field: value
+                for field, value in (
+                    ("uploader_name", uploader_name),
+                    ("uploader_profile", uploader_profile),
+                )
+                if value
+            }
+            metadata_url = post_page["final_url"] if post_page else post_url
+            print(f"Extracting metadata from {metadata_url}", flush=True)
             try:
                 extraction = extract_media(
-                    post_page["final_url"],
+                    metadata_url,
                     _MetadataSession(post_page),
                     cookie_file=cookie_file_from_env(),
                 )
-                metadata = extraction.get("metadata") or {}
+                metadata = dict(extraction.get("metadata") or {})
+                field_sources = dict(extraction.get("field_sources") or {})
+                acquired_metadata = any(
+                    metadata.get(field) and field_sources.get(field) != "url_pattern"
+                    for field in CORE_METADATA_FIELDS
+                )
+                for field, value in uploader_metadata.items():
+                    if value and not metadata.get(field):
+                        metadata[field] = value
+                        field_sources[field] = "url_pattern"
                 targets = [
                     metadata.get(field)
                     for field in ("canonical_url", "webpage_url", "final_url")
                     if metadata.get(field)
                 ]
-                cleared = all(
-                    public_http_url(url) and not is_factcheck_url(url) and page_for(url)
+                cleared = bool(post_page) and all(
+                    public_http_url(url) and not is_factcheck_url(url)
+                    and page_for(url, purpose="metadata")
                     for url in targets
                 )
                 safe_metadata = {
@@ -475,9 +531,15 @@ def collect_evidence(payload, components, media, store, errors):
                     for field in CORE_METADATA_FIELDS
                     if metadata.get(field)
                 }
+                uploader = str(metadata.get("uploader_name") or "")
+                uploader_url = uploader if public_http_url(uploader) else "https://" + uploader
                 if (
                     cleared
+                    and acquired_metadata
                     and safe_metadata
+                    and not is_factcheck_url(metadata.get("uploader_profile"))
+                    and not is_factcheck_url(uploader_url)
+                    and re.sub(r"[^a-z0-9]", "", uploader.lower()) not in FACTCHECK_HANDLES
                     and not is_factcheck_text(
                         " ".join(str(value) for value in safe_metadata.values())
                     )
@@ -489,8 +551,12 @@ def collect_evidence(payload, components, media, store, errors):
                         method="platform_metadata",
                         verified=True,
                         metadata=safe_metadata,
-                        field_sources=extraction.get("field_sources") or {},
+                        field_sources=field_sources,
+                        requested_url=post_url,
+                        final_url=post_page["final_url"],
+                        canonical_url=post_page["canonical_url"],
                     )
+                    uploader_metadata = {}
                 for error in extraction.get("errors") or []:
                     _error(
                         errors,
@@ -499,6 +565,17 @@ def collect_evidence(payload, components, media, store, errors):
                     )
             except Exception as error:
                 _error(errors, "retrieval.metadata", error)
+        if uploader_metadata:
+            store.add(
+                "uploader_url_pattern",
+                post_url,
+                json.dumps(uploader_metadata, ensure_ascii=False),
+                method="url_pattern",
+                verified=False,
+                metadata=uploader_metadata,
+                field_sources={field: "url_pattern" for field in uploader_metadata},
+                requested_url=post_url,
+            )
 
         for query in build_queries(payload, components, media):
             try:
@@ -519,7 +596,9 @@ def collect_evidence(payload, components, media, store, errors):
                 )
                 if is_factcheck_text(observation):
                     continue
-                page = page_for(item.get("url"))
+                page = page_for(
+                    item.get("url"), purpose="social" if "site:" in query else "web"
+                )
                 if page and observation:
                     store.add(
                         "search_candidate",
@@ -543,7 +622,7 @@ def collect_evidence(payload, components, media, store, errors):
                 for item in image_search.get("pages") or []:
                     if is_factcheck_text(item.get("title")):
                         continue
-                    page = page_for(item.get("url"))
+                    page = page_for(item.get("url"), purpose="image")
                     if page:
                         store.add(
                             "image_candidate",
@@ -589,6 +668,7 @@ def collect_evidence(payload, components, media, store, errors):
                         method="wayback",
                         verified=True,
                         archive=archive,
+                        requested_url=url,
                     )
             except Exception as error:
                 _error(errors, "retrieval.archive", error)
