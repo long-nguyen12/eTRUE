@@ -414,16 +414,20 @@ def collect_evidence(payload, components, media, store, errors):
 
     def page_for(url):
         if not public_http_url(url) or is_factcheck_url(url):
+            print(f"Skipping page_for({url}): not public or is factcheck", flush=True)
             return None
         key = _url_key(url)
         if key in inspected:
+            print(f"Skipping page_for({url}): already inspected", flush=True)
             return pages.get(key)
         if len(inspected) >= 10:
+            print(f"Skipping page_for({url}): inspected limit reached", flush=True)
             return None
         inspected.add(key)
         try:
             page = inspect_page(session, url)
         except Exception as error:
+            print(f"Error inspecting page {url}: {error}", flush=True)
             _error(errors, "retrieval.page", error)
             return None
         if not page:
@@ -448,6 +452,7 @@ def collect_evidence(payload, components, media, store, errors):
     try:
         post_url = payload.get("post_url")
         post_page = page_for(post_url) if post_url else None
+        print(f"Post page for {post_url}: {post_page}", flush=True)
         if post_page:
             try:
                 extraction = extract_media(
