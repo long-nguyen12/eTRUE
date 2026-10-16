@@ -61,7 +61,9 @@ def _merged_info(info):
 
 
 def metadata_from_info(info, fallback_url):
+    print(f"Raw metadata from yt_dlp: {info}", flush=True)
     value = _merged_info(info)
+    print(f"Extracted metadata from yt_dlp: {value}", flush=True)
     upload_date = _date_value(value.get("upload_date")) or _date_value(value.get("timestamp"))
     metadata = {
         "title": _clean_text(value.get("title"), 1000),

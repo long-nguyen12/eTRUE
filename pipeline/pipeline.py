@@ -149,7 +149,6 @@ def verify_claim(
         "trace": [],
         "status": "error",
         "errors": [],
-        "started_at": now(),
     }
     errors = result["errors"]
     store = EvidenceStore()
@@ -256,5 +255,4 @@ def verify_claim(
         result["evidence_relations"], result["trace"] = _relations(
             result["component_results"]
         )
-        result["finished_at"] = now()
     return result
